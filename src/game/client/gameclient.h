@@ -646,7 +646,8 @@ public:
 			int m_FirstFutureInteractionTick = -1;
 			int m_InteractionType = 0;
 			int m_HorizonReason = 0;
-			bool m_FreezeTransition = false;
+			bool m_RegularFreezeTransition = false;
+			bool m_SpeculativeFreezeTransition = false;
 			vec2 m_PreSnapshotForecastPos = vec2(0.0f, 0.0f);
 			int m_PreSnapshotTargetTick = 0;
 			float m_PreSnapshotTargetIntra = 0.0f;
