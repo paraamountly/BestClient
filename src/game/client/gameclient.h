@@ -625,6 +625,7 @@ public:
 		int m_aPredTick[200];
 		vec2 m_aGoresPredPos[200];
 		int m_aGoresPredTick[200];
+		int m_aGoresPredGeneration[200];
 		bool m_SpecCharPresent;
 		vec2 m_SpecChar;
 
@@ -660,9 +661,13 @@ public:
 	bool m_GoresInteractionPreInputBacked = false;
 	uint64_t m_GoresFallbackCount = 0;
 	uint64_t m_GoresHistoryFailureCount = 0;
+	uint64_t m_GoresMetricValidationMissCount = 0;
+	int m_GoresPredictionGeneration = 0;
 	int64_t m_GoresPredictionCpuTotal = 0;
 	uint64_t m_GoresPredictionFrames = 0;
 	vec2 m_GoresPreSnapshotRenderPos = vec2(0.0f, 0.0f);
+	int m_GoresPreSnapshotTargetTick = 0;
+	float m_GoresPreSnapshotTargetIntra = 0.0f;
 	bool m_GoresPreSnapshotInteraction = false;
 	bool m_GoresMeasureSnapshotCorrection = false;
 
