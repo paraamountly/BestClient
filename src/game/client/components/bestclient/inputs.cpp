@@ -2,6 +2,7 @@
 #include "inputs.h"
 
 #include <base/math.h>
+
 #include <engine/shared/config.h>
 
 #include <algorithm>
@@ -57,6 +58,13 @@ namespace
 			return 0.0f;
 		return g_Config.m_BcFInputAmount / 1000.0f;
 	}
+
+	float GoresModeOffsetTicks()
+	{
+		if(g_Config.m_BcInputs != BC_INPUTS_GORES || g_Config.m_BcGoresInputAmount <= 0)
+			return 0.0f;
+		return g_Config.m_BcGoresInputAmount / 100.0f;
+	}
 } // namespace
 
 float BcInputs::EffectiveOffsetTicks()
@@ -68,6 +76,7 @@ float BcInputs::EffectiveOffsetTicks()
 	case BC_INPUTS_SAIKO: return SaikoModeOffsetTicks();
 	case BC_INPUTS_DELTA: return DeltaModeOffsetTicks();
 	case BC_INPUTS_F: return FModeOffsetTicks();
+	case BC_INPUTS_GORES: return GoresModeOffsetTicks();
 	default: return 0.0f;
 	}
 }
@@ -160,9 +169,14 @@ bool BcInputs::CloudOthers()
 	return g_Config.m_BcInputs == BC_INPUTS_CLOUD && g_Config.m_BcCloudInputOthers != 0;
 }
 
+bool BcInputs::GoresOthers()
+{
+	return g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputOthers != 0;
+}
+
 bool BcInputs::AnyOthers()
 {
-	return FastOthers() || BestOthers() || SaikoOthers() || DeltaOthers() || FOthers() || CloudOthers();
+	return FastOthers() || BestOthers() || SaikoOthers() || DeltaOthers() || FOthers() || CloudOthers() || GoresOthers();
 }
 
 bool BcInputs::ImmediateOthers()

@@ -263,15 +263,15 @@ void CGameClient::OnConsoleInit()
 					      &m_Ghost,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,
-						  &m_MovingTilesBackground, // TClient
-						  &m_FastPractice, // BestClient
-						  &m_CloudInput, // BestClient
-						  &m_BcAutoMargin, // BestClient
-						  &m_MapLayersForeground,
-						  &m_MovingTilesForeground, // TClient
+					      &m_MovingTilesBackground, // TClient
+					      &m_FastPractice, // BestClient
+					      &m_CloudInput, // BestClient
+					      &m_BcAutoMargin, // BestClient
+					      &m_MapLayersForeground,
+					      &m_MovingTilesForeground, // TClient
 					      &m_SelfTimeCp, // BestClient
 					      &m_ShowPoints, // BestClient
-					      &m_Outlines,  // TClient
+					      &m_Outlines, // TClient
 					      &m_Mumble, // TClient
 					      &m_Pet, // TClient
 					      &m_ClientIndicator, // BestClient
@@ -2114,6 +2114,12 @@ void CGameClient::InvalidateSnapshot()
 
 void CGameClient::OnNewSnapshot()
 {
+	if(IsGoresInputMode() && m_Snap.m_LocalClientId >= 0)
+	{
+		m_GoresPreSnapshotRenderPos = m_aClients[m_Snap.m_LocalClientId].m_RenderPos;
+		m_GoresPreSnapshotInteraction = m_GoresInteractionClientId >= 0;
+		m_GoresMeasureSnapshotCorrection = true;
+	}
 	auto &&Evolve = [this](CNetObj_Character *pCharacter, int Tick) {
 		CWorldCore TempWorld;
 		CCharacterCore TempCore = CCharacterCore();
@@ -3015,6 +3021,19 @@ bool CGameClient::IsCloudInputMode() const
 	return m_CloudInput.IsActive();
 }
 
+bool CGameClient::IsGoresInputMode() const
+{
+	return g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputAmount > 0;
+}
+
+bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
+{
+	if(!g_Config.m_ClAntiPingPreInput || ClientId < 0 || ClientId >= MAX_CLIENTS || Tick <= 0)
+		return false;
+	const CNetMsg_Sv_PreInput &PreInput = m_aClients[ClientId].m_aPreInputs[Tick % 200];
+	return PreInput.m_Owner == ClientId && PreInput.m_IntendedTick == Tick;
+}
+
 bool CGameClient::IsFastInputLocalClient(int ClientId) const
 {
 	return ClientId == m_Snap.m_LocalClientId || (PredictDummy() && ClientId == m_aLocalIds[!g_Config.m_ClDummy]);
@@ -3062,6 +3081,7 @@ void CGameClient::ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld)
 
 void CGameClient::OnPredict()
 {
+	const int64_t GoresPredictionStart = IsGoresInputMode() ? time_get() : 0;
 	// store the previous values so we can detect prediction errors
 	CCharacterCore BeforePrevChar = m_PredictedPrevChar;
 	CCharacterCore BeforeChar = m_PredictedChar;
@@ -3144,10 +3164,57 @@ void CGameClient::OnPredict()
 	if(PredictDummy())
 		pDummyChar = m_PredictedWorld.GetCharacterById(m_aLocalIds[!g_Config.m_ClDummy]);
 
+	const bool GoresInputMode = IsGoresInputMode();
+	m_GoresRequestedHorizon = GoresInputMode ? g_Config.m_BcGoresInputAmount / 100.0f : 0.0f;
+	m_GoresAcceptedHorizon = m_GoresRequestedHorizon;
+	m_GoresInteractionClientId = -1;
+	m_GoresInteractionPreInputBacked = false;
+	std::fill(std::begin(m_aGoresInteractionGroup), std::end(m_aGoresInteractionGroup), false);
+	if(GoresInputMode)
+	{
+		m_aGoresInteractionGroup[m_Snap.m_LocalClientId] = true;
+		const CCharacterCore &LocalCore = pLocalChar->GetCore();
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(ClientId == m_Snap.m_LocalClientId)
+				continue;
+			CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+			if(!pOther)
+				continue;
+			const CCharacterCore &OtherCore = pOther->GetCore();
+			const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
+			const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
+			const bool CollisionRisk = distance(LocalCore.m_Pos, OtherCore.m_Pos) <= 64.0f;
+			if(!HookedByLocal && !HookingLocal && !CollisionRisk)
+				continue;
+
+			m_aGoresInteractionGroup[ClientId] = true;
+			if(m_GoresInteractionClientId < 0)
+				m_GoresInteractionClientId = ClientId;
+		}
+
+		if(m_GoresInteractionClientId >= 0)
+		{
+			m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, g_Config.m_BcGoresInputInteractionAmount / 100.0f);
+			bool AllPreInputBacked = true;
+			const int RequiredTicks = (int)std::ceil(m_GoresAcceptedHorizon);
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+			{
+				if(!m_aGoresInteractionGroup[ClientId] || ClientId == m_Snap.m_LocalClientId || IsFastInputLocalClient(ClientId))
+					continue;
+				for(int ExtraTick = 1; ExtraTick <= RequiredTicks; ExtraTick++)
+					AllPreInputBacked &= HasExactPreInput(ClientId, Client()->PredGameTick(g_Config.m_ClDummy) + ExtraTick);
+			}
+			m_GoresInteractionPreInputBacked = AllPreInputBacked;
+			if(!AllPreInputBacked)
+				m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, 0.25f);
+		}
+	}
+
 	bool RealPredTick = false;
 	// predict
 
-	const float FastInputOffsetTicks = CloudInputMode ? 0.0f : BcInputs::EffectiveOffsetTicks();
+	const float FastInputOffsetTicks = CloudInputMode ? 0.0f : (GoresInputMode ? m_GoresRequestedHorizon : BcInputs::EffectiveOffsetTicks());
 	const int FastInputTicks = CloudInputMode ? m_CloudInput.SelfTickOffset() : BcInputs::PredictionTicks(FastInputOffsetTicks);
 	const bool FastInputOthers = CloudInputMode ? (g_Config.m_BcCloudInputOthers != 0 && m_ReceivedPreInput) : BcInputs::AnyOthers();
 	const int FastInputTicksOthers = CloudInputMode ? (FastInputOthers ? m_CloudInput.OthersTickOffset() : 0) : (FastInputOthers ? BcInputs::PredictionTicksOthers(FastInputOffsetTicks) : 0);
@@ -3163,13 +3230,13 @@ void CGameClient::OnPredict()
 	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTickSelf; Tick++)
 	{
 		// fetch the previous characters
-		if(Tick == FinalTickSelf)
+		if(Tick == FinalTickSelf && !GoresInputMode)
 		{
 			m_PrevPredictedWorld.CopyWorld(&m_PredictedWorld);
 			m_PredictedPrevChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
 		}
-		if(Tick == FinalTickOthers)
+		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
 			for(int i = 0; i < MAX_CLIENTS; i++)
 				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(i))
@@ -3178,6 +3245,8 @@ void CGameClient::OnPredict()
 
 		if(Tick == Client()->PredGameTick(g_Config.m_ClDummy))
 		{
+			if(GoresInputMode)
+				m_PrevPredictedWorld.CopyWorld(&m_PredictedWorld);
 			m_PredictedPrevChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
 
@@ -3208,7 +3277,7 @@ void CGameClient::OnPredict()
 		else if(FastInputTicks > 0 && Tick > FinalTickRegular)
 		{
 			pInputData = CloudInputMode ? &m_CloudInput.Input(LocalTee) : &m_Controls.m_aFastInput[LocalTee];
-			if(g_Config.m_BcInputs != BC_INPUTS_SAIKO && GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
+			if(g_Config.m_BcInputs != BC_INPUTS_SAIKO && g_Config.m_BcInputs != BC_INPUTS_GORES && GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
 				pDummyInputData = &DummyFastInput;
 		}
 
@@ -3244,12 +3313,12 @@ void CGameClient::OnPredict()
 		m_PredictedWorld.m_WorldConfig.m_PredictEvents = TempPredEventState;
 
 		// fetch the current characters
-		if(Tick == FinalTickSelf)
+		if(Tick == FinalTickSelf && !GoresInputMode)
 		{
 			m_PredictedChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_Predicted = pLocalChar->GetCore();
 		}
-		if(Tick == FinalTickOthers)
+		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
 			for(int i = 0; i < MAX_CLIENTS; i++)
 				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(i))
@@ -3278,6 +3347,13 @@ void CGameClient::OnPredict()
 				// history makes GetFastInputPos interpolate between the practice and the real tee.
 				if(PracticeActive && m_FastPractice.IsPracticeParticipant(i))
 					continue;
+				if(GoresInputMode)
+				{
+					m_aClients[i].m_aGoresPredPos[Tick % 200] = pChar->Core()->m_Pos;
+					m_aClients[i].m_aGoresPredTick[Tick % 200] = Tick;
+					if(Tick > FinalTickRegular)
+						continue;
+				}
 				// Do not write extrapolated PredPos for other tees during local-only overprediction.
 				// Those ticks are simulated without their real inputs and poison antiping/history.
 				if(Tick > FinalTickOthers && !IsFastInputLocalClient(i))
@@ -3708,6 +3784,36 @@ void CGameClient::OnPredict()
 
 	// BestClient: tick the copied practice world after regular prediction
 	m_FastPractice.SyncFromPrediction();
+	if(GoresInputMode)
+	{
+		if(m_GoresMeasureSnapshotCorrection)
+		{
+			const int RegularTick = Client()->PredGameTick(g_Config.m_ClDummy);
+			if(RegularTick > 0 && m_aClients[m_Snap.m_LocalClientId].m_aPredTick[RegularTick % 200] == RegularTick)
+			{
+				const float CorrectionDistance = distance(m_GoresPreSnapshotRenderPos, m_aClients[m_Snap.m_LocalClientId].m_aPredPos[RegularTick % 200]);
+				if(g_Config.m_BcGoresInputDebug)
+				{
+					char aBuf[256];
+					str_format(aBuf, sizeof(aBuf), "snapshot correction=%.2f interaction=%d interaction_correction=%.2f", CorrectionDistance, m_GoresPreSnapshotInteraction ? 1 : 0, m_GoresPreSnapshotInteraction ? CorrectionDistance : 0.0f);
+					Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+				}
+			}
+			m_GoresMeasureSnapshotCorrection = false;
+		}
+		m_GoresPredictionCpuTotal += time_get() - GoresPredictionStart;
+		m_GoresPredictionFrames++;
+		if(g_Config.m_BcGoresInputDebug && m_GoresPredictionFrames % 50 == 0)
+		{
+			char aBuf[512];
+			const double AverageUs = m_GoresPredictionCpuTotal * 1000000.0 / (time_freq() * (double)m_GoresPredictionFrames);
+			str_format(aBuf, sizeof(aBuf), "requested=%.2f accepted=%.2f interaction=%d player=%d remote_input=%s fallbacks=%llu history_failures=%llu avg_cpu_us=%.1f",
+				m_GoresRequestedHorizon, m_GoresAcceptedHorizon, m_GoresInteractionClientId >= 0 ? 1 : 0, m_GoresInteractionClientId,
+				m_GoresInteractionClientId < 0 ? "n/a" : (m_GoresInteractionPreInputBacked ? "preinput" : "assumed"),
+				(unsigned long long)m_GoresFallbackCount, (unsigned long long)m_GoresHistoryFailureCount, AverageUs);
+			Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+		}
+	}
 }
 
 void CGameClient::OnActivateEditor()
@@ -3923,6 +4029,8 @@ void CGameClient::CClientData::Reset()
 	std::fill(std::begin(m_aSmoothLen), std::end(m_aSmoothLen), 0);
 	std::fill(std::begin(m_aPredPos), std::end(m_aPredPos), vec2(0.0f, 0.0f));
 	std::fill(std::begin(m_aPredTick), std::end(m_aPredTick), 0);
+	std::fill(std::begin(m_aGoresPredPos), std::end(m_aGoresPredPos), vec2(0.0f, 0.0f));
+	std::fill(std::begin(m_aGoresPredTick), std::end(m_aGoresPredTick), 0);
 	m_SpecCharPresent = false;
 	m_SpecChar = vec2(0.0f, 0.0f);
 
@@ -4704,7 +4812,7 @@ void CGameClient::UpdateRenderedCharacters()
 			continue;
 		}
 
-		if(Predict() && (i == m_Snap.m_LocalClientId || (AntiPingPlayers() && !IsOtherTeam(i))) && pChar)
+		if(Predict() && (i == m_Snap.m_LocalClientId || ((AntiPingPlayers() || (IsGoresInputMode() && g_Config.m_BcGoresInputOthers)) && !IsOtherTeam(i))) && pChar)
 		{
 			m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
 			m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
@@ -4716,7 +4824,9 @@ void CGameClient::UpdateRenderedCharacters()
 				vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
 				m_aClients[i].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy));
 
-			if(g_Config.m_TcRemoveAnti)
+			if(IsGoresInputMode())
+				Pos = GetGoresInputPos(i);
+			else if(g_Config.m_TcRemoveAnti)
 				Pos = GetFreezePos(i);
 			else if(HasFastInput && (i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy])))
 				Pos = GetFastInputPos(i);
@@ -4740,22 +4850,28 @@ void CGameClient::UpdateRenderedCharacters()
 				m_aClients[i].m_RenderPrev.m_Angle = m_Snap.m_aCharacters[i].m_Prev.m_Angle;
 				m_aClients[i].m_RenderCur.m_Angle = m_Snap.m_aCharacters[i].m_Cur.m_Angle;
 
+				if(IsGoresInputMode())
+				{
+					// Gores samples exact physics history. Interaction group members must not be
+					// moved independently by either legacy or improved anti-ping smoothing.
+					Pos = GetGoresInputPos(i);
+				}
 				// Cloud skips ClAntiPingSmooth (same reason as aBeforeRender): on old kernels it
 				// locks others to snap rate. Use raw prediction / fast-input paths instead.
-				if(g_Config.m_ClAntiPingSmooth && !CloudInputMode)
+				else if(g_Config.m_ClAntiPingSmooth && !CloudInputMode)
 					Pos = GetSmoothPos(i);
 
 				// Fast-input others should feel immediate: prefer direct fast-input position over smoothing layers.
-				if(HasFastInputOthers && BcInputs::ImmediateOthers())
+				if(!IsGoresInputMode() && HasFastInputOthers && BcInputs::ImmediateOthers())
 					Pos = GetFastInputPos(i);
-				else if(g_Config.m_TcAntiPingImproved && ((CloudInputMode && FastInputOthers) || (!CloudInputMode && m_aClients[i].m_ValidAntipingSmooth)))
+				else if(!IsGoresInputMode() && g_Config.m_TcAntiPingImproved && ((CloudInputMode && FastInputOthers) || (!CloudInputMode && m_aClients[i].m_ValidAntipingSmooth)))
 					Pos = mix(m_aClients[i].m_PrevImprovedPredPos, m_aClients[i].m_ImprovedPredPos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
 
-				if(g_Config.m_TcRemoveAnti && m_pClient->m_IsLocalFrozen)
+				if(!IsGoresInputMode() && g_Config.m_TcRemoveAnti && m_pClient->m_IsLocalFrozen)
 					Pos = GetFreezePos(i);
-				else if(CloudInputMode && FastInputOthers && !g_Config.m_TcAntiPingImproved)
+				else if(!IsGoresInputMode() && CloudInputMode && FastInputOthers && !g_Config.m_TcAntiPingImproved)
 					Pos = GetFastInputPos(i);
-				else if(HasFastInputOthers && FastInputOthers && !g_Config.m_TcAntiPingImproved)
+				else if(!IsGoresInputMode() && HasFastInputOthers && FastInputOthers && !g_Config.m_TcAntiPingImproved)
 					Pos = GetFastInputPos(i);
 
 				if(g_Config.m_TcShowOthersGhosts && g_Config.m_TcSwapGhosts && !(m_aClients[i].m_FreezeEnd > 0 && g_Config.m_TcHideFrozenGhosts))
@@ -4974,6 +5090,9 @@ vec2 CGameClient::GetSmoothPos(int ClientId)
 }
 vec2 CGameClient::GetFastInputPos(int ClientId)
 {
+	if(IsGoresInputMode())
+		return GetGoresInputPos(ClientId);
+
 	// Cloud: sample PredPos at PredTick+Amount directly (same idea as Saiko/Best ApplyOffset).
 	// Never go through GetSmoothPos here — that is only for ClAntiPingSmooth corrections.
 	if(IsCloudInputMode())
@@ -5099,6 +5218,38 @@ vec2 CGameClient::GetFastInputPos(int ClientId)
 	}
 
 	return Pos;
+}
+
+vec2 CGameClient::GetGoresInputPos(int ClientId)
+{
+	float Offset = m_GoresRequestedHorizon;
+	if(m_GoresInteractionClientId >= 0 && m_aGoresInteractionGroup[ClientId])
+		Offset = m_GoresAcceptedHorizon;
+	else if(!IsFastInputLocalClient(ClientId))
+		Offset = g_Config.m_BcGoresInputOthers ? minimum(Offset, 0.25f) : 0.0f;
+
+	int Tick = Client()->PredGameTick(g_Config.m_ClDummy);
+	float Intra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	BcInputs::ApplyOffset(Offset, Tick, Intra);
+
+	if(Tick > 0 &&
+		m_aClients[ClientId].m_aGoresPredTick[(Tick - 1) % 200] == Tick - 1 &&
+		m_aClients[ClientId].m_aGoresPredTick[Tick % 200] == Tick)
+	{
+		return mix(m_aClients[ClientId].m_aGoresPredPos[(Tick - 1) % 200], m_aClients[ClientId].m_aGoresPredPos[Tick % 200], Intra);
+	}
+
+	m_GoresFallbackCount++;
+	m_GoresHistoryFailureCount++;
+	const int RegularTick = Client()->PredGameTick(g_Config.m_ClDummy);
+	const float RegularIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	if(RegularTick > 0 &&
+		m_aClients[ClientId].m_aPredTick[(RegularTick - 1) % 200] == RegularTick - 1 &&
+		m_aClients[ClientId].m_aPredTick[RegularTick % 200] == RegularTick)
+	{
+		return mix(m_aClients[ClientId].m_aPredPos[(RegularTick - 1) % 200], m_aClients[ClientId].m_aPredPos[RegularTick % 200], RegularIntra);
+	}
+	return m_aClients[ClientId].m_RegularPredicted.m_Pos;
 }
 vec2 CGameClient::GetFreezePos(int ClientId)
 {
@@ -6719,8 +6870,8 @@ bool CGameClient::IsSnapTapBlockedByCommunity() const
 {
 	auto IsBlockedGameType = [](const char *pGameType) -> bool {
 		return pGameType != nullptr && pGameType[0] != '\0' &&
-			(str_find_nocase(pGameType, "ddracenet") != nullptr ||
-				str_find_nocase(pGameType, "0xf") != nullptr);
+		       (str_find_nocase(pGameType, "ddracenet") != nullptr ||
+			       str_find_nocase(pGameType, "0xf") != nullptr);
 	};
 
 	const char *pCommunityId = nullptr;

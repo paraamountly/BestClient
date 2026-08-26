@@ -623,6 +623,8 @@ public:
 		int64_t m_aSmoothLen[2];
 		vec2 m_aPredPos[200];
 		int m_aPredTick[200];
+		vec2 m_aGoresPredPos[200];
+		int m_aGoresPredTick[200];
 		bool m_SpecCharPresent;
 		vec2 m_SpecChar;
 
@@ -650,6 +652,19 @@ public:
 	};
 
 	CClientData m_aClients[MAX_CLIENTS];
+
+	bool m_aGoresInteractionGroup[MAX_CLIENTS] = {};
+	int m_GoresInteractionClientId = -1;
+	float m_GoresRequestedHorizon = 0.0f;
+	float m_GoresAcceptedHorizon = 0.0f;
+	bool m_GoresInteractionPreInputBacked = false;
+	uint64_t m_GoresFallbackCount = 0;
+	uint64_t m_GoresHistoryFailureCount = 0;
+	int64_t m_GoresPredictionCpuTotal = 0;
+	uint64_t m_GoresPredictionFrames = 0;
+	vec2 m_GoresPreSnapshotRenderPos = vec2(0.0f, 0.0f);
+	bool m_GoresPreSnapshotInteraction = false;
+	bool m_GoresMeasureSnapshotCorrection = false;
 
 	class CClientStats
 	{
@@ -779,6 +794,8 @@ public:
 	void ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld);
 	bool GetDummyFastInput(CNetObj_PlayerInput &DummyFastInput, const CNetObj_PlayerInput *pDummyInputData, const class CCharacter *pDummyChar, int LocalTee, int DummyTee) const;
 	bool IsCloudInputMode() const;
+	bool IsGoresInputMode() const;
+	bool HasExactPreInput(int ClientId, int Tick) const;
 	bool IsFastInputLocalClient(int ClientId) const;
 
 	int m_aNextChangeInfo[NUM_DUMMIES];
@@ -1029,6 +1046,7 @@ public:
 	vec2 GetSmoothPos(int ClientId);
 	vec2 GetFreezePos(int ClientId);
 	vec2 GetFastInputPos(int ClientId);
+	vec2 GetGoresInputPos(int ClientId);
 	vec2 BcGetCursorWorldPos() const;
 
 	int m_MultiViewTeam;

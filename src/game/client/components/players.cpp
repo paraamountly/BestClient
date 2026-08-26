@@ -612,7 +612,7 @@ void CPlayers::RenderHook(
 		else
 		{
 			HookPos = GameClient()->m_aClients[pPlayerChar->m_HookedPlayer].m_RenderPos;
-			if(g_Config.m_TcSwapGhosts && Client()->State() != IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_LocalClientId == ClientId)
+			if(g_Config.m_TcSwapGhosts && !GameClient()->IsGoresInputMode() && Client()->State() != IClient::STATE_DEMOPLAYBACK && GameClient()->m_Snap.m_LocalClientId == ClientId)
 			{
 				HookPos = GameClient()->GetSmoothPos(pPlayerChar->m_HookedPlayer);
 			}
