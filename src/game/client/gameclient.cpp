@@ -150,6 +150,12 @@ void UpdateGoresConfidenceHorizon(CGameClient::CClientData::SGoresPredictionStat
 	if(State.m_RegularFreezeTransition)
 		State.m_AcceptedHorizon = 0.0f;
 }
+
+float GoresLocalRecoveryHorizon(int RecoveryDebt, float RequestedHorizon)
+{
+	const float Recovery = std::clamp(1.0f - RecoveryDebt / (float)GORES_FREEZE_RECOVERY_DEBT, 0.0f, 1.0f);
+	return RequestedHorizon * Recovery;
+}
 } // namespace
 
 const char *CGameClient::Version() const { return GAME_VERSION; }
@@ -3494,7 +3500,8 @@ void CGameClient::OnPredict()
 						continue;
 					auto &State = m_aClients[ClientId].m_GoresPrediction;
 					const bool Frozen = GoresCharacterFrozen(*pLocalLike);
-					State.m_RegularFreezeTransition = State.m_Initialized && State.m_LastEvaluationTick != FinalTickRegular && Frozen != State.m_LastFrozen;
+					const bool NewEvaluationTick = State.m_LastEvaluationTick != FinalTickRegular;
+					State.m_RegularFreezeTransition = State.m_Initialized && NewEvaluationTick && Frozen != State.m_LastFrozen;
 					if(State.m_RegularFreezeTransition)
 					{
 						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
@@ -3505,9 +3512,14 @@ void CGameClient::OnPredict()
 							m_GoresAcceptedHorizon = 0.0f;
 						}
 					}
+					else if(State.m_Initialized && NewEvaluationTick && State.m_RecoveryDebt > 0)
+						State.m_RecoveryDebt--;
 					State.m_Initialized = true;
 					State.m_LastFrozen = Frozen;
 					State.m_LastEvaluationTick = FinalTickRegular;
+					State.m_AcceptedHorizon = GoresLocalRecoveryHorizon(State.m_RecoveryDebt, m_GoresRequestedHorizon);
+					if(ClientId == m_Snap.m_LocalClientId)
+						m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, State.m_AcceptedHorizon);
 				}
 				const CCharacterCore &LocalCore = pLocalChar->GetCore();
 				for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
@@ -3668,11 +3680,12 @@ void CGameClient::OnPredict()
 					bool AllPreInputBacked = true;
 					for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 					{
-						if(!m_aGoresInteractionGroup[ClientId] || ClientId == m_Snap.m_LocalClientId || IsFastInputLocalClient(ClientId))
+						if(!m_aGoresInteractionGroup[ClientId] || ClientId == m_Snap.m_LocalClientId)
 							continue;
 						const auto &State = m_aClients[ClientId].m_GoresPrediction;
 						m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, State.m_AcceptedHorizon);
-						AllPreInputBacked &= State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresAcceptedHorizon;
+						if(!IsFastInputLocalClient(ClientId))
+							AllPreInputBacked &= State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresAcceptedHorizon;
 					}
 					m_GoresInteractionPreInputBacked = AllPreInputBacked;
 				}
@@ -3718,7 +3731,7 @@ void CGameClient::OnPredict()
 					const bool FirstInteractionMember = m_GoresInteractionClientId < 0;
 					if(m_GoresInteractionClientId < 0)
 						m_GoresInteractionClientId = ClientId;
-					const float RemoteHorizon = IsFastInputLocalClient(ClientId) ? m_GoresRequestedHorizon : State.m_AcceptedHorizon;
+					const float RemoteHorizon = State.m_AcceptedHorizon;
 					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, g_Config.m_BcGoresInputInteractionAmount / 100.0f, RemoteHorizon);
 					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, SafeHorizon);
 					if(FirstInteractionMember)
@@ -5748,6 +5761,8 @@ vec2 CGameClient::GetGoresInputPos(int ClientId)
 		Offset = m_GoresAcceptedHorizon;
 	else if(m_GoresInteractionClientId >= 0 && m_aGoresInteractionGroup[ClientId])
 		Offset = m_GoresAcceptedHorizon;
+	else if(IsFastInputLocalClient(ClientId))
+		Offset = m_aClients[ClientId].m_GoresPrediction.m_AcceptedHorizon;
 	else if(!IsFastInputLocalClient(ClientId))
 		Offset = g_Config.m_BcGoresInputOthers ? minimum(Offset, m_aClients[ClientId].m_GoresPrediction.m_AcceptedHorizon) : 0.0f;
 
