@@ -626,6 +626,36 @@ public:
 		vec2 m_aGoresPredPos[200];
 		int m_aGoresPredTick[200];
 		int m_aGoresPredGeneration[200];
+		struct SGoresPredictionState
+		{
+			float m_InputConfidence = 0.0f;
+			float m_HistoryConfidence = 0.0f;
+			float m_MotionConfidence = 0.0f;
+			float m_InteractionConfidence = 1.0f;
+			float m_Confidence = 0.0f;
+			float m_AcceptedHorizon = 0.0f;
+			float m_PreInputCoveredHorizon = 0.0f;
+			int m_RecoveryDebt = 0;
+			int m_StableInputTicks = 0;
+			int m_LastEvaluationTick = -1;
+			int m_LastDirection = 0;
+			int m_LastHook = 0;
+			bool m_LastFrozen = false;
+			vec2 m_LastVelocity = vec2(0.0f, 0.0f);
+			int m_InteractionUntilTick = -1;
+			int m_FirstFutureInteractionTick = -1;
+			int m_InteractionType = 0;
+			int m_HorizonReason = 0;
+			bool m_FreezeTransition = false;
+			vec2 m_PreSnapshotForecastPos = vec2(0.0f, 0.0f);
+			int m_PreSnapshotTargetTick = 0;
+			float m_PreSnapshotTargetIntra = 0.0f;
+			float m_RecentReconciliationError = 0.0f;
+			bool m_PreSnapshotInteraction = false;
+			bool m_PreSnapshotFreezeTransition = false;
+			bool m_ReconciliationPending = false;
+			bool m_Initialized = false;
+		} m_GoresPrediction;
 		bool m_SpecCharPresent;
 		vec2 m_SpecChar;
 
@@ -662,14 +692,26 @@ public:
 	uint64_t m_GoresFallbackCount = 0;
 	uint64_t m_GoresHistoryFailureCount = 0;
 	uint64_t m_GoresMetricValidationMissCount = 0;
+	uint64_t m_GoresReconciliationSampleCount = 0;
+	double m_GoresReconciliationErrorTotal = 0.0;
+	float m_GoresReconciliationErrorMax = 0.0f;
+	uint64_t m_GoresInteractionErrorCount = 0;
+	double m_GoresInteractionErrorTotal = 0.0;
+	uint64_t m_GoresFreezeErrorCount = 0;
+	double m_GoresFreezeErrorTotal = 0.0;
 	int m_GoresPredictionGeneration = 0;
 	int64_t m_GoresPredictionCpuTotal = 0;
+	int64_t m_GoresInteractionAnalysisCpuTotal = 0;
+	int64_t m_GoresConfidenceCpuTotal = 0;
 	uint64_t m_GoresPredictionFrames = 0;
 	vec2 m_GoresPreSnapshotForecastPos = vec2(0.0f, 0.0f);
 	int m_GoresPreSnapshotTargetTick = 0;
 	float m_GoresPreSnapshotTargetIntra = 0.0f;
 	bool m_GoresPreSnapshotInteraction = false;
+	bool m_GoresPreSnapshotFreezeTransition = false;
 	bool m_GoresMeasureSnapshotCorrection = false;
+	bool m_GoresLocalFreezeTransition = false;
+	bool m_GoresWasActive = false;
 
 	class CClientStats
 	{
