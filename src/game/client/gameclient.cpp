@@ -2116,7 +2116,6 @@ void CGameClient::OnNewSnapshot()
 {
 	if(IsGoresInputMode() && m_Snap.m_LocalClientId >= 0)
 	{
-		m_GoresPreSnapshotRenderPos = m_aClients[m_Snap.m_LocalClientId].m_RenderPos;
 		m_GoresPreSnapshotInteraction = m_GoresInteractionClientId >= 0;
 		m_GoresPreSnapshotTargetTick = Client()->PredGameTick(g_Config.m_ClDummy);
 		m_GoresPreSnapshotTargetIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
@@ -2129,7 +2128,14 @@ void CGameClient::OnNewSnapshot()
 			LocalClient.m_aGoresPredGeneration[(m_GoresPreSnapshotTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
 			LocalClient.m_aGoresPredGeneration[m_GoresPreSnapshotTargetTick % 200] == m_GoresPredictionGeneration;
 		m_GoresMeasureSnapshotCorrection = ValidOldForecast;
-		if(!ValidOldForecast)
+		if(ValidOldForecast)
+		{
+			m_GoresPreSnapshotForecastPos = mix(
+				LocalClient.m_aGoresPredPos[(m_GoresPreSnapshotTargetTick - 1) % 200],
+				LocalClient.m_aGoresPredPos[m_GoresPreSnapshotTargetTick % 200],
+				m_GoresPreSnapshotTargetIntra);
+		}
+		else
 		{
 			m_GoresMetricValidationMissCount++;
 			if(g_Config.m_BcGoresInputDebug)
@@ -3848,7 +3854,7 @@ void CGameClient::OnPredict()
 					m_aClients[LocalClientId].m_aGoresPredPos[(m_GoresPreSnapshotTargetTick - 1) % 200],
 					m_aClients[LocalClientId].m_aGoresPredPos[m_GoresPreSnapshotTargetTick % 200],
 					m_GoresPreSnapshotTargetIntra);
-				const float CorrectionDistance = distance(m_GoresPreSnapshotRenderPos, RebuiltForecast);
+				const float CorrectionDistance = distance(m_GoresPreSnapshotForecastPos, RebuiltForecast);
 				if(g_Config.m_BcGoresInputDebug)
 				{
 					char aBuf[256];

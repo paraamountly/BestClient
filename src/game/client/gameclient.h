@@ -665,7 +665,7 @@ public:
 	int m_GoresPredictionGeneration = 0;
 	int64_t m_GoresPredictionCpuTotal = 0;
 	uint64_t m_GoresPredictionFrames = 0;
-	vec2 m_GoresPreSnapshotRenderPos = vec2(0.0f, 0.0f);
+	vec2 m_GoresPreSnapshotForecastPos = vec2(0.0f, 0.0f);
 	int m_GoresPreSnapshotTargetTick = 0;
 	float m_GoresPreSnapshotTargetIntra = 0.0f;
 	bool m_GoresPreSnapshotInteraction = false;
