@@ -626,6 +626,10 @@ public:
 		vec2 m_aGoresPredPos[200];
 		int m_aGoresPredTick[200];
 		int m_aGoresPredGeneration[200];
+		CCharacterCore m_GoresRenderPrev;
+		CCharacterCore m_GoresRenderCur;
+		int m_GoresRenderGeneration = 0;
+		bool m_GoresRenderValid = false;
 		struct SGoresPredictionState
 		{
 			float m_InputConfidence = 0.0f;

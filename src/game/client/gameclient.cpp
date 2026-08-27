@@ -3359,6 +3359,7 @@ void CGameClient::OnPredict()
 		else
 			m_GoresPredictionGeneration++;
 		const int BaseTick = Client()->GameTick(g_Config.m_ClDummy);
+		m_aClients[m_Snap.m_LocalClientId].m_GoresRenderValid = false;
 		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 		{
 			m_aClients[ClientId].m_GoresPrediction.m_RegularFreezeTransition = false;
@@ -3408,6 +3409,8 @@ void CGameClient::OnPredict()
 			m_PredictedPrevChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
 		}
+		else if(Tick == FinalTickSelf)
+			m_aClients[m_Snap.m_LocalClientId].m_GoresRenderPrev = pLocalChar->GetCore();
 		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
 			for(int i = 0; i < MAX_CLIENTS; i++)
@@ -3496,6 +3499,13 @@ void CGameClient::OnPredict()
 		{
 			m_PredictedChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_Predicted = pLocalChar->GetCore();
+		}
+		else if(Tick == FinalTickSelf)
+		{
+			auto &LocalClient = m_aClients[m_Snap.m_LocalClientId];
+			LocalClient.m_GoresRenderCur = pLocalChar->GetCore();
+			LocalClient.m_GoresRenderGeneration = m_GoresPredictionGeneration;
+			LocalClient.m_GoresRenderValid = true;
 		}
 		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
@@ -4747,6 +4757,10 @@ void CGameClient::CClientData::Reset()
 	std::fill(std::begin(m_aGoresPredPos), std::end(m_aGoresPredPos), vec2(0.0f, 0.0f));
 	std::fill(std::begin(m_aGoresPredTick), std::end(m_aGoresPredTick), 0);
 	std::fill(std::begin(m_aGoresPredGeneration), std::end(m_aGoresPredGeneration), 0);
+	m_GoresRenderPrev.Reset();
+	m_GoresRenderCur.Reset();
+	m_GoresRenderGeneration = 0;
+	m_GoresRenderValid = false;
 	m_GoresPrediction = {};
 	m_SpecCharPresent = false;
 	m_SpecChar = vec2(0.0f, 0.0f);
@@ -5532,8 +5546,19 @@ void CGameClient::UpdateRenderedCharacters()
 		const bool GoresInteractionMember = IsGoresInputMode() && m_aGoresInteractionGroup[i];
 		if(Predict() && (i == m_Snap.m_LocalClientId || ((AntiPingPlayers() || (IsGoresInputMode() && (g_Config.m_BcGoresInputOthers || GoresInteractionMember))) && !IsOtherTeam(i))) && pChar)
 		{
-			m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
-			m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
+			const bool UseGoresLocalRenderCore = IsGoresInputMode() && i == m_Snap.m_LocalClientId &&
+				m_aClients[i].m_GoresRenderValid && m_aClients[i].m_GoresRenderGeneration == m_GoresPredictionGeneration &&
+				absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f;
+			if(UseGoresLocalRenderCore)
+			{
+				m_aClients[i].m_GoresRenderCur.Write(&m_aClients[i].m_RenderCur);
+				m_aClients[i].m_GoresRenderPrev.Write(&m_aClients[i].m_RenderPrev);
+			}
+			else
+			{
+				m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
+				m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
+			}
 
 			m_aClients[i].m_IsPredicted = true;
 
