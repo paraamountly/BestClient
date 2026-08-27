@@ -60,17 +60,17 @@ Apply
 Info
 == Інформація
 
-BestClient Links
-== Посилання BestClient
+Gores Client Links
+== Посилання Gores Client
 
-BestClient Settings
-== Налаштування BestClient
+Gores Client Settings
+== Налаштування Gores Client
 
 Config Files
 == Конфіг файли
 
-BestClient Developers
-== Розробники BestClient
+Gores Client Developers
+== Розробники Gores Client
 
 Hide Settings Tabs
 == Приховати вкладки в налаштуваннях
@@ -84,8 +84,8 @@ Reason
 Color
 == Колір
 
-BestClient
-== BestClient
+Gores Client
+== Gores Client
 
 Speed
 == Швидкість
@@ -96,7 +96,7 @@ Telegram
 Check update
 == 
 
-BestClient %s is out!
+Gores Client %s is out!
 == 
 
 Preparing update...
@@ -1227,7 +1227,7 @@ Commands in other layout
 Cinematic camera
 == 
 
-Use BestClient MasterServer
+Use Gores Client MasterServer
 == 
 
 Show player below indicator
@@ -1353,7 +1353,7 @@ Fun
 Shop
 == 
 
-BestClient %s is available
+Gores Client %s is available
 == 
 
 Downloading

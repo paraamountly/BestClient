@@ -5,8 +5,8 @@
 ##### /authors #####
 
 ##### translated strings #####
-BestClient
-== BestClient
+Gores Client
+== Gores Client
 
 Info
 == Información
@@ -53,8 +53,8 @@ No
 Color
 == Color
 
-BestClient Links
-== Enlaces BestClient
+Gores Client Links
+== Enlaces Gores Client
 
 Discord
 == Discord
@@ -65,11 +65,11 @@ Website
 Config Files
 == Archivos de configuración
 
-BestClient Settings
-== Ajustes de BestClient
+Gores Client Settings
+== Ajustes de Gores Client
 
-BestClient Developers
-== Desarrolladores de BestClient
+Gores Client Developers
+== Desarrolladores de Gores Client
 
 Hide Settings Tabs
 == Ocultar pestañas de ajustes
@@ -89,7 +89,7 @@ Telegram
 Check update
 == 
 
-BestClient %s is out!
+Gores Client %s is out!
 == 
 
 Preparing update...
@@ -1220,7 +1220,7 @@ Commands in other layout
 Cinematic camera
 == 
 
-Use BestClient MasterServer
+Use Gores Client MasterServer
 == 
 
 Show player below indicator
@@ -1346,7 +1346,7 @@ Fun
 Shop
 == 
 
-BestClient %s is available
+Gores Client %s is available
 == 
 
 Downloading

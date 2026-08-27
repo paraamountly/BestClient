@@ -87,7 +87,7 @@ float CMusicPlayerLyrics::PreferredTextSlotWidth(ITextRender *pTextRender, float
 	if(!ShowBrand && !ShowTitle)
 		return ClampedMax;
 
-	const char *pText = ShowBrand ? "BestClient" : FallbackText(FALLBACK_TITLE);
+	const char *pText = ShowBrand ? "Gores Client" : FallbackText(FALLBACK_TITLE);
 	if(pTextRender == nullptr || pText == nullptr || pText[0] == '\0')
 		return ClampedMax;
 
@@ -361,7 +361,7 @@ void CMusicPlayerLyrics::StartRequest(IHttp *pHttp, const char *pTitle, const ch
 	m_pRequest->Timeout(CTimeout{10000, 0, 500, 10});
 	m_pRequest->LogProgress(HTTPLOG::FAILURE);
 	m_pRequest->FailOnErrorStatus(false);
-	m_pRequest->HeaderString("Lrclib-Client", "BestClient/" BESTCLIENT_VERSION " (https://github.com/BestProjectTeam/BestClient)");
+	m_pRequest->HeaderString("Lrclib-Client", "GoresClient/" BESTCLIENT_VERSION " (https://github.com/BestProjectTeam/BestClient)");
 	m_RequestKey = m_ActiveKey;
 	m_DisplayState = EDisplayState::Loading;
 	pHttp->Run(m_pRequest);
@@ -762,7 +762,7 @@ void CMusicPlayerLyrics::Render(ITextRender *pTextRender, CUi *pUi, const CUIRec
 	switch(m_DisplayState)
 	{
 	case EDisplayState::Idle:
-		pStatusText = "BestClient";
+		pStatusText = "Gores Client";
 		WhiteStatusText = true;
 		break;
 	case EDisplayState::Loading:
@@ -775,7 +775,7 @@ void CMusicPlayerLyrics::Render(ITextRender *pTextRender, CUi *pUi, const CUIRec
 			pStatusText = "No connection";
 		else
 		{
-			pStatusText = "BestClient";
+			pStatusText = "Gores Client";
 			WhiteStatusText = true;
 		}
 		break;

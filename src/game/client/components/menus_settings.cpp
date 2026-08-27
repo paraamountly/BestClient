@@ -1105,7 +1105,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			if(m_NeedRestartUpdate)
 			{
 				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-				Ui()->DoLabel(&RestartWarning, Localize("BestClient update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
+				Ui()->DoLabel(&RestartWarning, Localize("Gores Client update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
 				TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 			}
 			else
@@ -1205,7 +1205,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			Localize("General"),
 			Localize("Appearance"),
 			TCLocalize("TClient"),
-			Localize("BestClient"),
+			Localize("Gores Client"),
 		};
 		static CButtonContainer s_aRootTabButtons[ROOT_TAB_LENGTH];
 		const int CurRootTab = GetRootTabByPage(g_Config.m_UiSettingsPage);
@@ -1328,7 +1328,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		Localize("DDNet"),
 		Localize("Assets"),
 		TCLocalize("TClient"),
-		Localize("BestClient"),
+		Localize("Gores Client"),
 		Localize("Profiles"),
 		Localize("Configs")};
 
@@ -1435,7 +1435,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		if(m_NeedRestartUpdate)
 		{
 			TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-			Ui()->DoLabel(&RestartWarning, Localize("BestClient update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
+			Ui()->DoLabel(&RestartWarning, Localize("Gores Client update downloaded! Restart to apply."), 14.0f, TEXTALIGN_ML);
 			TextRender()->TextColor(1.0f, 1.0f, 1.0f, 1.0f);
 		}
 		else
@@ -2919,7 +2919,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 		char aBuf[256];
 		if(State == IUpdater::VERSION_AVAILABLE)
 		{
-			str_format(aBuf, sizeof(aBuf), Localize("BestClient %s is out!"), Updater()->GetLatestVersionString());
+			str_format(aBuf, sizeof(aBuf), Localize("Gores Client %s is out!"), Updater()->GetLatestVersionString());
 			UpdaterRect.VSplitLeft(TextRender()->TextWidth(14.0f, aBuf, -1, -1.0f) + 10.0f, &UpdaterRect, &Button);
 			Button.VSplitLeft(100.0f, &Button, nullptr);
 			static CButtonContainer s_ButtonUpdate;
@@ -2932,7 +2932,7 @@ void CMenus::RenderSettingsDDNet(CUIRect MainView)
 			str_copy(aBuf, Localize("Updating…"));
 		else if(State == IUpdater::NEED_RESTART)
 		{
-			str_copy(aBuf, Localize("BestClient updated!"));
+			str_copy(aBuf, Localize("Gores Client updated!"));
 			m_NeedRestartUpdate = true;
 		}
 		else

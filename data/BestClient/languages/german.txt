@@ -10,17 +10,17 @@ Speed
 Color
 == Farbe
 
-BestClient Links
-== BestClient-Links
+Gores Client Links
+== Gores Client-Links
 
 Config Files
 == Konfigurationsdateien
 
-BestClient Settings
-== BestClient-Einstellungen
+Gores Client Settings
+== Gores Client-Einstellungen
 
-BestClient Developers
-== BestClient-Entwickler
+Gores Client Developers
+== Gores Client-Entwickler
 
 Hide Settings Tabs
 == Einstellungs-Tabs ausblenden
@@ -127,7 +127,7 @@ Off (default)
 Preset
 == Voreinstellung
 
-BestClient
+Gores Client
 == 
 
 Discord
@@ -139,7 +139,7 @@ Telegram
 Check update
 == 
 
-BestClient %s is out!
+Gores Client %s is out!
 == 
 
 Preparing update...
@@ -1210,7 +1210,7 @@ Commands in other layout
 Cinematic camera
 == 
 
-Use BestClient MasterServer
+Use Gores Client MasterServer
 == 
 
 Show player below indicator
@@ -1345,7 +1345,7 @@ Shop
 Website
 == 
 
-BestClient %s is available
+Gores Client %s is available
 == 
 
 Downloading

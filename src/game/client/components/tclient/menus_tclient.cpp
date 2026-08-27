@@ -2729,7 +2729,7 @@ void CMenus::RenderSettingsTClientConfigs(CUIRect MainView)
 			g_Config.m_TcUiShowTClient ^= 1;
 		if(DoButton_CheckBox(&g_Config.m_TcUiShowDDNet, Localize("DDNet"), g_Config.m_TcUiShowDDNet, &TopCol2))
 			g_Config.m_TcUiShowDDNet ^= 1;
-		if(DoButton_CheckBox(&g_Config.m_TcUiShowBestClient, Localize("BestClient"), g_Config.m_TcUiShowBestClient, &TopCol3))
+		if(DoButton_CheckBox(&g_Config.m_TcUiShowBestClient, Localize("Gores Client"), g_Config.m_TcUiShowBestClient, &TopCol3))
 			g_Config.m_TcUiShowBestClient ^= 1;
 	}
 
@@ -2851,7 +2851,7 @@ void CMenus::RenderSettingsTClientConfigs(CUIRect MainView)
 		{
 		case ConfigDomain::DDNET: return "DDNet";
 		case ConfigDomain::TCLIENT: return "TClient";
-		case ConfigDomain::BESTCLIENT: return "BestClient";
+		case ConfigDomain::BESTCLIENT: return "Gores Client";
 		default: return "Other";
 		}
 	};

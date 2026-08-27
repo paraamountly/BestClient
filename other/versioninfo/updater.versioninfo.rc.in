@@ -24,9 +24,9 @@ BEGIN
 		VALUE "CompanyName",      "${VERSION_COMPANY}\0"
 		VALUE "FileDescription",  "${VERSION_PRODUCT_NAME} Updater\0"
 		VALUE "FileVersion",      "${VERSION}\0"
-		VALUE "InternalName",     "bestclient-updater\0"
+		VALUE "InternalName",     "GoresClient-Updater\0"
 		VALUE "LegalCopyright",   "Copyright (C) ${VERSION_COMPANY}\0"
-		VALUE "OriginalFilename", "bestclient-updater.exe\0"
+		VALUE "OriginalFilename", "GoresClient-Updater.exe\0"
 		VALUE "ProductName",      "${VERSION_PRODUCT_NAME}\0"
 		VALUE "ProductVersion",   "${VERSION}\0"
 		END

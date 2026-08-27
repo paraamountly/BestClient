@@ -10,7 +10,7 @@
 
 #include <memory>
 
-#define CLIENT_EXEC "DDNet"
+#define CLIENT_EXEC "GoresClient"
 #define SERVER_EXEC "DDNet-Server"
 
 #if defined(CONF_FAMILY_WINDOWS)
