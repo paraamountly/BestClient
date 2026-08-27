@@ -713,6 +713,7 @@ public:
 	int64_t m_GoresInteractionAnalysisCpuTotal = 0;
 	int64_t m_GoresConfidenceCpuTotal = 0;
 	uint64_t m_GoresPredictionFrames = 0;
+	int64_t m_GoresLastDebugSummaryTime = 0;
 	vec2 m_GoresPreSnapshotForecastPos = vec2(0.0f, 0.0f);
 	int m_GoresPreSnapshotTargetTick = 0;
 	float m_GoresPreSnapshotTargetIntra = 0.0f;
