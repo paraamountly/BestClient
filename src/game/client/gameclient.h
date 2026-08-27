@@ -692,6 +692,7 @@ public:
 	int m_GoresInteractionClientId = -1;
 	float m_GoresRequestedHorizon = 0.0f;
 	float m_GoresAcceptedHorizon = 0.0f;
+	float m_GoresLastLoggedAcceptedHorizon = -1.0f;
 	bool m_GoresInteractionPreInputBacked = false;
 	uint64_t m_GoresFallbackCount = 0;
 	uint64_t m_GoresHistoryFailureCount = 0;
