@@ -140,6 +140,20 @@ bool GoresCharacterFrozen(CCharacter &Character)
 	return Character.m_FreezeTime > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen;
 }
 
+bool GoresCharactersColliding(CCharacter &Character, CCharacter &Other)
+{
+	const CCharacterCore &Core = Character.GetCore();
+	const CCharacterCore &OtherCore = Other.GetCore();
+	if(!Character.CanCollide(Other.GetCid()))
+		return false;
+	if(!(Core.m_Super || OtherCore.m_Super) && (Core.m_Solo || OtherCore.m_Solo))
+		return false;
+	const bool CollisionEnabled = (Core.m_Super || OtherCore.m_Super) ||
+		(!Core.m_CollisionDisabled && !OtherCore.m_CollisionDisabled && (Core.m_Tuning.m_PlayerCollision || OtherCore.m_Tuning.m_PlayerCollision));
+	const float Distance = distance(Core.m_Pos, OtherCore.m_Pos);
+	return CollisionEnabled && Distance > 0.0f && Distance < CCharacterCore::PhysicalSize() * 1.25f;
+}
+
 void UpdateGoresConfidenceHorizon(CGameClient::CClientData::SGoresPredictionState &State, float RequestedHorizon)
 {
 	const float RecoveryFactor = std::clamp(1.0f - State.m_RecoveryDebt / (float)GORES_FREEZE_RECOVERY_DEBT, 0.0f, 1.0f);
@@ -3532,7 +3546,7 @@ void CGameClient::OnPredict()
 					const CCharacterCore &OtherCore = pOther->GetCore();
 					const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
 					const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
-					const bool CollisionRisk = distance(LocalCore.m_Pos, OtherCore.m_Pos) <= 64.0f;
+					const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
 					if(!HookedByLocal && !HookingLocal && !CollisionRisk)
 						continue;
 					auto &GoresState = m_aClients[ClientId].m_GoresPrediction;
@@ -3718,7 +3732,7 @@ void CGameClient::OnPredict()
 				const CCharacterCore &OtherCore = pOther->GetCore();
 				const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
 				const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
-				const bool CollisionRisk = distance(LocalCore.m_Pos, OtherCore.m_Pos) <= 64.0f;
+				const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
 				const bool FutureInteraction = BeforeRequestedTarget && (HookedByLocal || HookingLocal || CollisionRisk);
 				if(FutureInteraction && State.m_FirstFutureInteractionTick < 0)
 				{
