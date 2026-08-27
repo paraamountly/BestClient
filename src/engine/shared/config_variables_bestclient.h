@@ -336,7 +336,7 @@ MACRO_CONFIG_INT(BcCloudInputAmount, bc_cloud_input_amount, 0, 0, 500, CFGFLAG_C
 MACRO_CONFIG_INT(BcCloudInputOthers, bc_cloud_input_others, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply cloud input to other tees")
 MACRO_CONFIG_INT(BcGoresInputAmount, bc_gores_input_amount, 100, 0, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gores input prediction amount in 0.01 ticks")
 MACRO_CONFIG_INT(BcGoresInputOthers, bc_gores_input_others, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Apply conservative Gores prediction to other tees")
-MACRO_CONFIG_INT(BcGoresInputInteractionAmount, bc_gores_input_interaction_amount, 25, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gores interaction prediction amount in 0.01 ticks")
+MACRO_CONFIG_INT(BcGoresInputInteractionAmount, bc_gores_input_interaction_amount, 25, 0, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Gores interaction prediction amount in 0.01 ticks")
 MACRO_CONFIG_INT(BcGoresInputDebug, bc_gores_input_debug, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Log Gores prediction metrics to the console")
 MACRO_CONFIG_INT(BcAutoMargin, bc_auto_margin, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Auto margin")
 MACRO_CONFIG_INT(BcSnapTap, bc_snap_tap, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable Snap Tap for opposite left/right inputs")

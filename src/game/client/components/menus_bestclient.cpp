@@ -2149,7 +2149,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 
 			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
 			InputsBlock.HSplitTop(LineSize, &Button, &InputsBlock);
-			DoTickAmountSlider(&g_Config.m_BcGoresInputInteractionAmount, &Button, Localize("Interaction offset"), 0, 100);
+			DoTickAmountSlider(&g_Config.m_BcGoresInputInteractionAmount, &Button, Localize("Interaction offset"), 0, 200);
 
 			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
 			InputsBlock.HSplitTop(LineSize, &Content, &InputsBlock);
