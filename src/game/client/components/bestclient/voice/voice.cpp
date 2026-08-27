@@ -3666,7 +3666,7 @@ std::string CVoiceChat::EffectiveServerAddress() const
 
 const char *CVoiceChat::EffectiveServerLabel() const
 {
-	return IsManagedServerConfig() ? "BestClient Voice" : g_Config.m_BcVoiceChatServerAddress;
+	return IsManagedServerConfig() ? "Gores Client Voice" : g_Config.m_BcVoiceChatServerAddress;
 }
 
 bool CVoiceChat::IsManagedServerConfig() const

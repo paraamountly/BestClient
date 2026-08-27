@@ -1,5 +1,5 @@
 {
-  description = "BestClient DDNet";
+  description = "Gores Client DDNet";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -9,7 +9,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in {
       packages.${system}.default = pkgs.stdenv.mkDerivation {
-        pname = "bestclient";
+        pname = "gores-client";
         version = "1.5";
 
         src = pkgs.fetchurl {
@@ -38,25 +38,25 @@
         cp -r . $out/
         chmod +x $out/DDNet
 
-        cat > $out/share/applications/bestclient.desktop <<EOF
+        cat > $out/share/applications/gores-client.desktop <<EOF
 [Desktop Entry]
-Name=BestClient
+Name=Gores Client
 Comment=DDNet client with extra features
-Exec=$out/bin/bestclient
+Exec=$out/bin/GoresClient
 Icon=$out/data/BestClient/bc_icon.png
 Type=Application
 Categories=Game;
 EOF
 
         # wrap the binary so it runs from the right directory
-        makeWrapper $out/DDNet $out/bin/bestclient \
+        makeWrapper $out/DDNet $out/bin/GoresClient \
           --run "cd $out"
         '';
       };
 
       apps.${system}.default = {
         type = "app";
-        program = "${self.packages.${system}.default}/bin/bestclient";
+        program = "${self.packages.${system}.default}/bin/GoresClient";
       };
     };
 }

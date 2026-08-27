@@ -182,7 +182,7 @@ public:
 		}
 		else
 		{
-			str_copy(m_Activity.assets.small_text, "BestClient player", sizeof(m_Activity.assets.small_text));
+			str_copy(m_Activity.assets.small_text, "Gores Client player", sizeof(m_Activity.assets.small_text));
 		}
 
 		str_copy(m_Activity.details, "discord.gg/bestclient", sizeof(m_Activity.details));

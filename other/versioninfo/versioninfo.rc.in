@@ -20,14 +20,14 @@ BEGIN
 	BEGIN
 		BLOCK "040904B0"
 		BEGIN
-		VALUE "Comments",         "${VERSION_EXECUTABLE}\0"
+		VALUE "Comments",         "${VERSION_PRODUCT_NAME}\0"
 		VALUE "CompanyName",      "${VERSION_COMPANY}\0"
-		VALUE "FileDescription",  "${VERSION_EXECUTABLE}\0"
+		VALUE "FileDescription",  "${VERSION_PRODUCT_NAME}\0"
 		VALUE "FileVersion",      "${VERSION}\0"
 		VALUE "InternalName",     "${VERSION_EXECUTABLE}\0"
 		VALUE "LegalCopyright",   "Copyright (C) ${VERSION_COMPANY}\0"
 		VALUE "OriginalFilename", "${VERSION_EXECUTABLE}.exe\0"
-		VALUE "ProductName",      "${VERSION_EXECUTABLE}\0"
+		VALUE "ProductName",      "${VERSION_PRODUCT_NAME}\0"
 		VALUE "ProductVersion",   "${VERSION}\0"
 		END
 	END

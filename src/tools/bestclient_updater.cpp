@@ -1,4 +1,4 @@
-// BestClient Updater — standalone Win32 GUI application.
+// Gores Client Updater — standalone Win32 GUI application.
 // Replaces the PowerShell update script. Receives four positional arguments:
 //   argv[1]  PID of the client process to wait for
 //   argv[2]  Absolute path to the downloaded .zip archive
@@ -716,7 +716,7 @@ static DWORD WINAPI WorkerThread(LPVOID pParam)
 	SetPercent(100);
 
 	// ── 9. Launch client ──────────────────────────────────────────────────────
-	SetStatus(L"Launching BestClient...");
+	SetStatus(L"Launching Gores Client...");
 	Sleep(500);
 
 	SHELLEXECUTEINFOW Sei = {};
@@ -796,18 +796,18 @@ static void Paint(HWND hWnd)
 
 	SetBkMode(Mem, TRANSPARENT);
 
-	// Title "BestClient"
+	// Title "Gores Client"
 	{
 		HFONT F = MakeFont(32, true);
 		HFONT Old = (HFONT)SelectObject(Mem, F);
 		SetTextColor(Mem, C_TITLE);
 		RECT R = {0, 10, Rc.right, 52};
-		DrawTextW(Mem, L"BestClient", -1, &R, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+		DrawTextW(Mem, L"Gores Client", -1, &R, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
 		SelectObject(Mem, Old);
 		DeleteObject(F);
 	}
 
-	// "Updater" — same style as "BestClient", pulled up close
+	// "Updater" — same style as "Gores Client", pulled up close
 	{
 		HFONT F = MakeFont(32, true);
 		HFONT Old = (HFONT)SelectObject(Mem, F);
@@ -935,8 +935,8 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	if(Argc < 5 || !ppArgv)
 	{
 		MessageBoxW(NULL,
-			L"Usage: bestclient-updater.exe <pid> <archive> <install_dir> <exe>",
-			L"BestClient Updater", MB_ICONERROR);
+			L"Usage: GoresClient-Updater.exe <pid> <archive> <install_dir> <exe>",
+			L"Gores Client Updater", MB_ICONERROR);
 		return 1;
 	}
 
@@ -964,7 +964,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int)
 	g_hWnd = CreateWindowExW(
 		WS_EX_APPWINDOW,
 		L"BCUpdater",
-		L"BestClient Updater",
+		L"Gores Client Updater",
 		WS_POPUP | WS_VISIBLE,
 		X, Y, WND_W, WND_H,
 		NULL, NULL, hInst, NULL);

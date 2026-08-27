@@ -29,7 +29,7 @@ permissions:
   contents: write
 
 env:
-  CLIENT_NAME: BestClient
+  CLIENT_NAME: GoresClient
 
 jobs:
   build-cmake:
@@ -49,14 +49,14 @@ jobs:
           cmake-init-env: CXXFLAGS="-Werror -Wno-unused-function"
           package-file: "*-linux_x86_64.tar.xz"
           artifact-name: release-linux
-          asset-name: BestClient-linux.tar.xz
+          asset-name: gores-client-linux.tar.xz
         - name: windows
           os: windows-latest
           cmake-args: -A x64 -DTOOLS=OFF -DDOWNLOAD_GTEST=OFF -DVULKAN=ON
           cmake-init-env: CXXFLAGS= LDFLAGS=
           package-file: "*-win64.zip"
           artifact-name: release-windows
-          asset-name: BestClient-windows.zip
+          asset-name: gores-client-windows.zip
 
     steps:
     - uses: actions/checkout@v4
@@ -105,7 +105,7 @@ jobs:
         if(-not $SignTool) { throw "signtool.exe not found" }
         # Multi-config MSVC builds put binaries under a per-config subdirectory, so locate
         # them instead of hardcoding the layout.
-        $Targets = @("DDNet.exe", "bestclient-updater.exe") | ForEach-Object {
+        $Targets = @("GoresClient.exe", "GoresClient-Updater.exe") | ForEach-Object {
           Get-ChildItem -Path build-release -Filter $_ -Recurse -File |
             Select-Object -First 1 -ExpandProperty FullName
         } | Where-Object { $_ }

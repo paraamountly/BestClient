@@ -3049,7 +3049,7 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 		Ui()->DoEditBox(&s_SpecMovedNotifyTextInput, &TextField, 14.0f);
 	}
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowPointsInTab, Localize("Show points in tab"), &g_Config.m_BcShowPointsInTab, &MiscBlock, LineSize);
-	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcMastersrv, Localize("Use BestClient MasterServer"), &g_Config.m_BcMastersrv, &MiscBlock, LineSize);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcMastersrv, Localize("Use Gores Client MasterServer"), &g_Config.m_BcMastersrv, &MiscBlock, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowhudDummyCoordIndicator, Localize("Show player below indicator"), &g_Config.m_BcShowhudDummyCoordIndicator, &MiscBlock, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowCorrectCheckpoint, Localize("Show current checkpoint in hud"), &g_Config.m_BcShowCorrectCheckpoint, &MiscBlock, LineSize);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcShowRealHitbox, Localize("Show real hitbox"), &g_Config.m_BcShowRealHitbox, &MiscBlock, LineSize);
@@ -3628,7 +3628,7 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 
 	// ── BestClient Links ───────────────────────────────────────────────────
 	LeftView.HSplitTop(HeadlineHeight, &Label, &LeftView);
-	Ui()->DoLabel(&Label, Localize("BestClient Links"), HeadlineFontSize, TEXTALIGN_ML);
+	Ui()->DoLabel(&Label, Localize("Gores Client Links"), HeadlineFontSize, TEXTALIGN_ML);
 	LeftView.HSplitTop(MarginSmall, nullptr, &LeftView);
 
 	static CButtonContainer s_DiscordButton, s_WebsiteButton, s_TelegramButton, s_CheckUpdateButton;
@@ -3662,7 +3662,7 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 	BestClientConfig = Button;
 
 	static CButtonContainer s_Config;
-	if(DoButtonLineSize_Menu(&s_Config, Localize("BestClient Settings"), 0, &BestClientConfig, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	if(DoButtonLineSize_Menu(&s_Config, Localize("Gores Client Settings"), 0, &BestClientConfig, LineSize, false, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
 	{
 		Storage()->GetCompletePath(IStorage::TYPE_SAVE, s_aConfigDomains[ConfigDomain::BESTCLIENT].m_aConfigPath, aBuf, sizeof(aBuf));
 		Client()->ViewFile(aBuf);
@@ -3670,7 +3670,7 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 
 	// ── BestClient Developers ─────────────────────────────────────────────
 	RightView.HSplitTop(HeadlineHeight, &Label, &RightView);
-	Ui()->DoLabel(&Label, Localize("BestClient Developers"), HeadlineFontSize, TEXTALIGN_ML);
+	Ui()->DoLabel(&Label, Localize("Gores Client Developers"), HeadlineFontSize, TEXTALIGN_ML);
 	RightView.HSplitTop(MarginSmall, nullptr, &RightView);
 	RightView.HSplitTop(MarginSmall, nullptr, &RightView);
 

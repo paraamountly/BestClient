@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://badges4noxy.vercel.app/badges/bestclient/bc_logo.webp" alt="BestClient" width="640" />
+  <h1>Gores Client</h1>
   <p>Custom DDNet client fork focused on comfort, customization, native tooling, and competitive quality-of-life features.</p>
 
   <p>
@@ -11,10 +11,10 @@
 
 ## About
 
-BestClient is a customized DDNet client built around native BestClient systems instead of a thin reskin.
+Gores Client is a customized DDNet client built around native Gores Client systems instead of a thin reskin.
 The project adds its own rendering stack, input tools, social systems, editors, and UI modules while staying compatible with DDNet servers.
 
-The client currently ships with more than **300** `bc_*` config variables, five BestClient settings tabs, integrated voice chat, a live HUD editor, clans, collaborative multimapping, Fast Practice, and native mini-games opened from the Info tab.
+The client currently ships with more than **300** `bc_*` config variables, five Gores Client settings tabs, integrated voice chat, a live HUD editor, clans, collaborative multimapping, Fast Practice, and native mini-games opened from the Info tab.
 
 ## Links
 
@@ -30,7 +30,7 @@ The client currently ships with more than **300** `bc_*` config variables, five 
   <img src="docs/screenshots/mainmenu.jpg" width="70%" alt="Main menu" />
 </p>
 
-### BestClient settings tabs
+### Gores Client settings tabs
 
 #### Visuals
 
@@ -141,7 +141,7 @@ Demo playback only (Demo Player): **Camera Drift**, **Dynamic FOV**.
 - **Chat Filter** — regex/censor list, player whitelist (from RushieClient)
 - **Voice Binds** — push-to-talk and voice moderation key
 - **Voice Chat** — Opus PTT/VAD, radius/team0, per-player volume/mute, voice mod tab in admin panel
-- **Client Indicator** — BestClient icon in nameplates/scoreboard + browser filter
+- **Client Indicator** — Gores Client icon in nameplates/scoreboard + browser filter
 
 ### Outside settings menu
 
@@ -490,7 +490,7 @@ Plain-text export: [docs/bc_config_list.txt](docs/bc_config_list.txt).
 
 ## Credits / borrowed features
 
-Some BestClient features were adapted from other DDNet client forks:
+Some Gores Client features were adapted from other DDNet client forks:
 
 - **Entity-Client** ([FoxNet-DDNet/Entity-Client-DDNet](https://github.com/FoxNet-DDNet/Entity-Client-DDNet)) — Physic Balls, Better Spectate (`+specpause`), Chat Bubbles
 - **RushieClient** ([RushieClient/RushieClient-ddnet](https://github.com/RushieClient/RushieClient-ddnet)) — Chat Filter, Edge Info, Find Teleport, Find Finish

@@ -40,9 +40,9 @@ static bool StrEndsWithNoCase(const char *pStr, const char *pSuffix)
 static constexpr const char *GITHUB_RELEASES_URL = "https://api.github.com/repos/BestProjectTeam/BestClient/releases?per_page=10";
 static constexpr const char *GITHUB_LATEST_RELEASE_URL = "https://github.com/BestProjectTeam/BestClient/releases/latest";
 #if defined(CONF_PLATFORM_ANDROID)
-static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.apk";
+static constexpr const char *UPDATE_ARCHIVE_PATH = "update/gores-client-release.apk";
 #else
-static constexpr const char *UPDATE_ARCHIVE_PATH = "update/bestclient-release.zip";
+static constexpr const char *UPDATE_ARCHIVE_PATH = "update/gores-client-release.zip";
 #endif
 
 static void BuildGitHubReleasesUrl(char *pBuf, int BufSize)
@@ -149,7 +149,7 @@ static int ScoreArchiveAsset(const char *pAssetName)
 		return -1;
 
 	const std::string Lower = ToLowerAscii(pAssetName);
-	if(Lower.find("bestclient") == std::string::npos)
+	if(Lower.find("gores-client") == std::string::npos && Lower.find("bestclient") == std::string::npos)
 		return -1;
 
 #if defined(CONF_FAMILY_WINDOWS)
@@ -177,15 +177,15 @@ static int ScoreArchiveAsset(const char *pAssetName)
 	int Score = 100;
 
 #if defined(CONF_FAMILY_WINDOWS)
-	if(Lower == "bestclient-windows.zip")
+	if(Lower == "gores-client-windows.zip" || Lower == "bestclient-windows.zip")
 		Score += 200;
 	if(Lower.find("x64") != std::string::npos || Lower.find("64") != std::string::npos || Lower.find("amd64") != std::string::npos)
 		Score += 20;
 #elif defined(CONF_PLATFORM_ANDROID)
-	if(Lower == "bestclient-android.apk")
+	if(Lower == "gores-client-android.apk" || Lower == "bestclient-android.apk")
 		Score += 200;
 #elif defined(CONF_PLATFORM_LINUX)
-	if(Lower == "bestclient-linux.tar.xz")
+	if(Lower == "gores-client-linux.tar.xz" || Lower == "bestclient-linux.tar.xz")
 		Score += 200;
 #endif
 
@@ -460,7 +460,7 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 		return false;
 	}
 
-	m_pStorage->GetBinaryPathAbsolute("bestclient-updater.exe", aUpdaterPath, sizeof(aUpdaterPath));
+	m_pStorage->GetBinaryPathAbsolute("GoresClient-Updater.exe", aUpdaterPath, sizeof(aUpdaterPath));
 	m_pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aExePath, sizeof(aExePath));
 	str_copy(aInstallDir, aExePath, sizeof(aInstallDir));
 	StripFilename(aInstallDir);
@@ -512,7 +512,7 @@ bool CUpdater::LaunchApplyScriptAndQuit()
 		return false;
 	}
 
-	m_pStorage->GetBinaryPathAbsolute("bestclient-updater", aUpdaterPath, sizeof(aUpdaterPath));
+	m_pStorage->GetBinaryPathAbsolute("GoresClient-Updater", aUpdaterPath, sizeof(aUpdaterPath));
 	m_pStorage->GetBinaryPathAbsolute(PLAT_CLIENT_EXEC, aExePath, sizeof(aExePath));
 	str_copy(aInstallDir, aExePath, sizeof(aInstallDir));
 	StripFilename(aInstallDir);

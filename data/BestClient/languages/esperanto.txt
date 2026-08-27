@@ -4,7 +4,7 @@
 
 ##### translated strings #####
 
-BestClient
+Gores Client
 == 
 
 Discord
@@ -16,7 +16,7 @@ Telegram
 Check update
 == 
 
-BestClient %s is out!
+Gores Client %s is out!
 == 
 
 Preparing update...
@@ -1195,7 +1195,7 @@ Commands in other layout
 Cinematic camera
 == 
 
-Use BestClient MasterServer
+Use Gores Client MasterServer
 == 
 
 Show player below indicator
@@ -1327,13 +1327,13 @@ Fun
 Shop
 == 
 
-BestClient Links
+Gores Client Links
 == 
 
 Website
 == 
 
-BestClient %s is available
+Gores Client %s is available
 == 
 
 Downloading
@@ -1354,10 +1354,10 @@ Open a dedicated component toggles page.
 Config Files
 == 
 
-BestClient Settings
+Gores Client Settings
 == 
 
-BestClient Developers
+Gores Client Developers
 == 
 
 Hide Settings Tabs
