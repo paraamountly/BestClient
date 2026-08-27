@@ -650,6 +650,7 @@ public:
 			bool m_SpeculativeFreezeTransition = false;
 			int m_ExpectedFreezeTick = -1;
 			int m_ExpectedFreezeGeneration = 0;
+			bool m_ExpectedFrozen = false;
 			vec2 m_PreSnapshotForecastPos = vec2(0.0f, 0.0f);
 			int m_PreSnapshotTargetTick = 0;
 			float m_PreSnapshotTargetIntra = 0.0f;

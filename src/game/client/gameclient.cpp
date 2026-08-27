@@ -110,6 +110,7 @@ enum EGoresInteractionType
 	GORES_INTERACTION_LOCAL_HOOK,
 	GORES_INTERACTION_REMOTE_HOOK,
 	GORES_INTERACTION_PROXIMITY,
+	GORES_INTERACTION_HAMMER,
 };
 
 constexpr int GORES_RECOVERY_DEBT_MAX = 8;
@@ -3386,6 +3387,10 @@ void CGameClient::OnPredict()
 	bool aGoresRegularFrozen[MAX_CLIENTS] = {};
 	int GoresPredictedLocalFreezeTick = -1;
 	float GoresPredictedLocalFreezeSafeHorizon = 0.0f;
+	int aGoresPredictedRemoteFreezeTick[MAX_CLIENTS] = {};
+	float aGoresPredictedRemoteFreezeSafeHorizon[MAX_CLIENTS] = {};
+	bool aGoresPredictedRemoteFrozen[MAX_CLIENTS] = {};
+	std::fill(std::begin(aGoresPredictedRemoteFreezeTick), std::end(aGoresPredictedRemoteFreezeTick), -1);
 
 	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTickSelf; Tick++)
 	{
@@ -3560,11 +3565,12 @@ void CGameClient::OnPredict()
 					const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
 					const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
 					const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
-					if(!HookedByLocal && !HookingLocal && !CollisionRisk)
+					const bool HammerInteraction = pLocalChar->m_aLastHammerHitTick[ClientId] == Tick || pOther->m_aLastHammerHitTick[m_Snap.m_LocalClientId] == Tick;
+					if(!HookedByLocal && !HookingLocal && !CollisionRisk && !HammerInteraction)
 						continue;
 					auto &GoresState = m_aClients[ClientId].m_GoresPrediction;
 					GoresState.m_InteractionUntilTick = FinalTickRegular + GORES_INTERACTION_HYSTERESIS_TICKS;
-					GoresState.m_InteractionType = HookedByLocal ? GORES_INTERACTION_LOCAL_HOOK : HookingLocal ? GORES_INTERACTION_REMOTE_HOOK : GORES_INTERACTION_PROXIMITY;
+					GoresState.m_InteractionType = HammerInteraction ? GORES_INTERACTION_HAMMER : HookedByLocal ? GORES_INTERACTION_LOCAL_HOOK : HookingLocal ? GORES_INTERACTION_REMOTE_HOOK : GORES_INTERACTION_PROXIMITY;
 					if(GoresState.m_RegularFreezeTransition)
 					{
 						m_GoresLocalFreezeTransition = true;
@@ -3670,10 +3676,21 @@ void CGameClient::OnPredict()
 						State.m_RegularFreezeTransition = Frozen != State.m_LastFrozen;
 						if(State.m_RegularFreezeTransition)
 						{
-							State.m_MotionConfidence = 0.0f;
-							State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
-							State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
-							Stable = false;
+							const int PreviousGeneration = m_GoresPredictionGeneration == 1 ? std::numeric_limits<int>::max() : m_GoresPredictionGeneration - 1;
+							const bool ExpectedInteractionFreeze = m_aGoresInteractionGroup[ClientId] &&
+								State.m_ExpectedFreezeTick == FinalTickRegular && State.m_ExpectedFreezeGeneration == PreviousGeneration && State.m_ExpectedFrozen == Frozen;
+							if(ExpectedInteractionFreeze)
+							{
+								State.m_ExpectedFreezeTick = -1;
+								State.m_ExpectedFreezeGeneration = 0;
+							}
+							else
+							{
+								State.m_MotionConfidence = 0.0f;
+								State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+								State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
+								Stable = false;
+							}
 						}
 						if(Stable)
 						{
@@ -3758,11 +3775,12 @@ void CGameClient::OnPredict()
 				const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
 				const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
 				const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
-				const bool FutureInteraction = BeforeRequestedTarget && (HookedByLocal || HookingLocal || CollisionRisk);
+				const bool HammerInteraction = pLocalChar->m_aLastHammerHitTick[ClientId] == Tick || pOther->m_aLastHammerHitTick[m_Snap.m_LocalClientId] == Tick;
+				const bool FutureInteraction = BeforeRequestedTarget && (HookedByLocal || HookingLocal || CollisionRisk || HammerInteraction);
 				if(FutureInteraction && State.m_FirstFutureInteractionTick < 0)
 				{
 					State.m_FirstFutureInteractionTick = Tick;
-					State.m_InteractionType = HookedByLocal ? GORES_INTERACTION_LOCAL_HOOK : HookingLocal ? GORES_INTERACTION_REMOTE_HOOK : GORES_INTERACTION_PROXIMITY;
+					State.m_InteractionType = HammerInteraction ? GORES_INTERACTION_HAMMER : HookedByLocal ? GORES_INTERACTION_LOCAL_HOOK : HookingLocal ? GORES_INTERACTION_REMOTE_HOOK : GORES_INTERACTION_PROXIMITY;
 					State.m_InteractionUntilTick = Tick + GORES_INTERACTION_HYSTERESIS_TICKS;
 					State.m_InteractionConfidence = 0.75f;
 					State.m_HorizonReason |= GORES_REASON_FUTURE_INTERACTION;
@@ -3783,13 +3801,21 @@ void CGameClient::OnPredict()
 				if(FreezeTransition && BeforeRequestedTarget)
 				{
 					State.m_SpeculativeFreezeTransition = true;
-					State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
 					State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
-					State.m_AcceptedHorizon = minimum(State.m_AcceptedHorizon, SafeHorizon);
 					if(m_aGoresInteractionGroup[ClientId])
 					{
 						m_GoresLocalFreezeTransition = true;
-						m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, SafeHorizon);
+						if(aGoresPredictedRemoteFreezeTick[ClientId] < 0)
+						{
+							aGoresPredictedRemoteFreezeTick[ClientId] = Tick;
+							aGoresPredictedRemoteFreezeSafeHorizon[ClientId] = SafeHorizon;
+							aGoresPredictedRemoteFrozen[ClientId] = GoresCharacterFrozen(*pOther);
+						}
+					}
+					else
+					{
+						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+						State.m_AcceptedHorizon = minimum(State.m_AcceptedHorizon, SafeHorizon);
 					}
 				}
 			}
@@ -4279,23 +4305,59 @@ void CGameClient::OnPredict()
 
 	if(GoresInputMode && m_GoresInteractionClientId >= 0 && m_GoresAcceptedHorizon > 0.0f)
 	{
-		int SharedTick = Client()->PredGameTick(g_Config.m_ClDummy);
-		float SharedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
-		BcInputs::ApplyOffset(m_GoresAcceptedHorizon, SharedTick, SharedIntra);
+		const auto ValidSharedHorizon = [&](float Horizon) {
+			int SharedTick = Client()->PredGameTick(g_Config.m_ClDummy);
+			float SharedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+			BcInputs::ApplyOffset(Horizon, SharedTick, SharedIntra);
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+			{
+				if(!m_aGoresInteractionGroup[ClientId])
+					continue;
+				if(SharedTick <= 0 ||
+					m_aClients[ClientId].m_aGoresPredTick[(SharedTick - 1) % 200] != SharedTick - 1 ||
+					m_aClients[ClientId].m_aGoresPredTick[SharedTick % 200] != SharedTick ||
+					m_aClients[ClientId].m_aGoresPredGeneration[(SharedTick - 1) % 200] != m_GoresPredictionGeneration ||
+					m_aClients[ClientId].m_aGoresPredGeneration[SharedTick % 200] != m_GoresPredictionGeneration)
+					return false;
+			}
+			return true;
+		};
+
+		if(!ValidSharedHorizon(m_GoresAcceptedHorizon))
+		{
+			float ValidHorizon = 0.0f;
+			for(int Hundredths = (int)std::floor(m_GoresAcceptedHorizon * 100.0f + 0.0001f); Hundredths > 0; Hundredths--)
+			{
+				const float Candidate = Hundredths / 100.0f;
+				if(ValidSharedHorizon(Candidate))
+				{
+					ValidHorizon = Candidate;
+					break;
+				}
+			}
+			m_GoresAcceptedHorizon = ValidHorizon;
+			m_GoresHistoryFailureCount++;
+		}
+	}
+
+	if(GoresInputMode)
+	{
 		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 		{
-			if(!m_aGoresInteractionGroup[ClientId])
+			if(ClientId == m_Snap.m_LocalClientId)
 				continue;
-			const bool ValidSharedHistory = SharedTick > 0 &&
-				m_aClients[ClientId].m_aGoresPredTick[(SharedTick - 1) % 200] == SharedTick - 1 &&
-				m_aClients[ClientId].m_aGoresPredTick[SharedTick % 200] == SharedTick &&
-				m_aClients[ClientId].m_aGoresPredGeneration[(SharedTick - 1) % 200] == m_GoresPredictionGeneration &&
-				m_aClients[ClientId].m_aGoresPredGeneration[SharedTick % 200] == m_GoresPredictionGeneration;
-			if(!ValidSharedHistory)
+			auto &State = m_aClients[ClientId].m_GoresPrediction;
+			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId] &&
+				aGoresPredictedRemoteFreezeSafeHorizon[ClientId] <= m_GoresAcceptedHorizon + 0.0001f)
 			{
-				m_GoresAcceptedHorizon = 0.0f;
-				m_GoresHistoryFailureCount++;
-				break;
+				State.m_ExpectedFreezeTick = aGoresPredictedRemoteFreezeTick[ClientId];
+				State.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
+				State.m_ExpectedFrozen = aGoresPredictedRemoteFrozen[ClientId];
+			}
+			else if(State.m_ExpectedFreezeTick > FinalTickRegular)
+			{
+				State.m_ExpectedFreezeTick = -1;
+				State.m_ExpectedFreezeGeneration = 0;
 			}
 		}
 	}

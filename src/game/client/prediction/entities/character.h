@@ -73,6 +73,7 @@ public:
 	bool m_NinjaJetpack;
 	int m_FreezeTime;
 	bool m_FrozenLastTick;
+	int m_aLastHammerHitTick[MAX_CLIENTS] = {};
 	vec2 m_PrevPos;
 	vec2 m_PrevPrevPos;
 	int m_TeleCheckpoint;
