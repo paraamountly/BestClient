@@ -2001,8 +2001,8 @@ Emotes
 No gifs assigned yet - drag some in from Settings
 == GIF не назначены. Добавьте их в настройках.
 
-Hook combo sounds not found. Put files as data/Gores Client/combo/combo1.wv ... combo7.wv
-== [[red]] Звуки хук-комбо не найдены. Поместите файлы combo1.wv ... combo7.wv в data/Gores Client/combo/.
+Hook combo sounds not found. Put files as data/BestClient/combo/combo1.wv ... combo7.wv
+== [[red]] Звуки хук-комбо не найдены. Поместите файлы combo1.wv ... combo7.wv в data/BestClient/combo/.
 
 Reloaded images. %d slot(s) fell back to main asset.
 == Изображения перезагружены. Слотов, возвращённых к основному ресурсу: %d.

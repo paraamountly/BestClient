@@ -2,7 +2,7 @@
 // Replaces the PowerShell update script. Receives four positional arguments:
 //   argv[1]  PID of the client process to wait for
 //   argv[2]  Absolute path to the downloaded .zip archive
-//   argv[3]  Install directory (directory containing DDNet.exe)
+//   argv[3]  Install directory (directory containing GoresClient.exe)
 //   argv[4]  Absolute path to the client executable to relaunch
 //
 // Only compiled on Windows (see CMakeLists.txt).
@@ -452,7 +452,7 @@ static void CopyTree(const wchar_t *pSrc, const wchar_t *pDst, std::function<voi
 }
 
 // Install one file without overwriting an existing executable in place.
-// In-place CopyFileW of DDNet.exe is a textbook dropper signature for Defender's
+// In-place CopyFileW of GoresClient.exe is a textbook dropper signature for Defender's
 // Behavior:...DefenseEvasion ML. Rename the destination aside, then MoveFile the
 // staged file into place (same volume — extract lives under install_dir\update).
 static bool InstallFile(const wchar_t *pSrc, const wchar_t *pDst)
