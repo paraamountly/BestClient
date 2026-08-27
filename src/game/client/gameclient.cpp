@@ -961,6 +961,7 @@ void CGameClient::OnReset()
 	m_GoresInteractionAnalysisCpuTotal = 0;
 	m_GoresConfidenceCpuTotal = 0;
 	m_GoresPredictionFrames = 0;
+	m_GoresLastDebugSummaryTime = 0;
 
 	for(auto &Stats : m_aStats)
 		Stats.Reset();
@@ -2245,7 +2246,7 @@ void CGameClient::OnNewSnapshot()
 		{
 			m_GoresMetricValidationMissCount++;
 			if(g_Config.m_BcGoresInputDebug)
-				Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", "reconciliation metric old-forecast validation miss");
+				Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "gores_input", "reconciliation metric old-forecast validation miss");
 		}
 	}
 	else
@@ -2263,7 +2264,7 @@ void CGameClient::OnNewSnapshot()
 			const bool InteractionMember = m_aGoresInteractionGroup[ClientId];
 			if(!InteractionMember && !g_Config.m_BcGoresInputOthers)
 				continue;
-			float Offset = InteractionMember ? m_GoresAcceptedHorizon : State.m_AcceptedHorizon;
+			float Offset = InteractionMember ? m_GoresAcceptedHorizon : m_GoresRequestedHorizon;
 			State.m_PreSnapshotTargetTick = Client()->PredGameTick(g_Config.m_ClDummy);
 			State.m_PreSnapshotTargetIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
 			BcInputs::ApplyOffset(Offset, State.m_PreSnapshotTargetTick, State.m_PreSnapshotTargetIntra);
@@ -3218,7 +3219,7 @@ void CGameClient::ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld)
 				continue;
 
 			const CNetMsg_Sv_PreInput PreInput = m_aClients[ClientId].m_aPreInputs[Tick % 200];
-			if(PreInput.m_IntendedTick != Tick)
+			if(!HasExactPreInput(ClientId, Tick))
 				continue;
 
 			//convert preinput to input
@@ -3359,9 +3360,9 @@ void CGameClient::OnPredict()
 		else
 			m_GoresPredictionGeneration++;
 		const int BaseTick = Client()->GameTick(g_Config.m_ClDummy);
-		m_aClients[m_Snap.m_LocalClientId].m_GoresRenderValid = false;
 		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 		{
+			m_aClients[ClientId].m_GoresRenderValid = false;
 			m_aClients[ClientId].m_GoresPrediction.m_RegularFreezeTransition = false;
 			m_aClients[ClientId].m_GoresPrediction.m_SpeculativeFreezeTransition = false;
 			if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
@@ -3410,7 +3411,11 @@ void CGameClient::OnPredict()
 			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
 		}
 		else if(Tick == FinalTickSelf)
-			m_aClients[m_Snap.m_LocalClientId].m_GoresRenderPrev = pLocalChar->GetCore();
+		{
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
+					m_aClients[ClientId].m_GoresRenderPrev = pChar->GetCore();
+		}
 		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
 			for(int i = 0; i < MAX_CLIENTS; i++)
@@ -3502,10 +3507,14 @@ void CGameClient::OnPredict()
 		}
 		else if(Tick == FinalTickSelf)
 		{
-			auto &LocalClient = m_aClients[m_Snap.m_LocalClientId];
-			LocalClient.m_GoresRenderCur = pLocalChar->GetCore();
-			LocalClient.m_GoresRenderGeneration = m_GoresPredictionGeneration;
-			LocalClient.m_GoresRenderValid = true;
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
+				{
+					auto &Client = m_aClients[ClientId];
+					Client.m_GoresRenderCur = pChar->GetCore();
+					Client.m_GoresRenderGeneration = m_GoresPredictionGeneration;
+					Client.m_GoresRenderValid = true;
+				}
 		}
 		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
@@ -3918,7 +3927,7 @@ void CGameClient::OnPredict()
 		// m_PrevPredictedWorld.CopyWorld(&m_PrevRegularPredictedWorld); // not sure if this is worth performance cost, it seems to not matter
 	}
 
-	if(g_Config.m_TcRemoveAnti)
+	if(g_Config.m_TcRemoveAnti && !GoresInputMode)
 	{
 		m_ExtraPredictedWorld.CopyWorldClean(&m_PredictedWorld);
 
@@ -4394,7 +4403,7 @@ void CGameClient::OnPredict()
 				char aBuf[256];
 				str_format(aBuf, sizeof(aBuf), "local_horizon requested=%.2f old=%.2f new=%.2f reason=%s interaction=%d generation=%d",
 					m_GoresRequestedHorizon, m_GoresLastLoggedAcceptedHorizon, m_GoresAcceptedHorizon, pReason, m_GoresInteractionClientId, m_GoresPredictionGeneration);
-				Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+				Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "gores_input", aBuf);
 			}
 			m_GoresLastLoggedAcceptedHorizon = m_GoresAcceptedHorizon;
 		}
@@ -4441,14 +4450,14 @@ void CGameClient::OnPredict()
 				{
 					char aBuf[256];
 					str_format(aBuf, sizeof(aBuf), "reconciliation_error=%.2f target_tick=%d target_intra=%.3f interaction=%d interaction_error=%.2f", CorrectionDistance, m_GoresPreSnapshotTargetTick, m_GoresPreSnapshotTargetIntra, m_GoresPreSnapshotInteraction ? 1 : 0, m_GoresPreSnapshotInteraction ? CorrectionDistance : 0.0f);
-					Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+					Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "gores_input", aBuf);
 				}
 			}
 			else
 			{
 				m_GoresMetricValidationMissCount++;
 				if(g_Config.m_BcGoresInputDebug)
-					Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", "reconciliation metric validation miss");
+					Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "gores_input", "reconciliation metric validation miss");
 			}
 			m_GoresMeasureSnapshotCorrection = false;
 		}
@@ -4503,8 +4512,10 @@ void CGameClient::OnPredict()
 		}
 		m_GoresPredictionCpuTotal += time_get() - GoresPredictionStart;
 		m_GoresPredictionFrames++;
-		if(g_Config.m_BcGoresInputDebug && m_GoresPredictionFrames % 50 == 0)
+		const int64_t Now = time_get();
+		if(g_Config.m_BcGoresInputDebug && (m_GoresLastDebugSummaryTime == 0 || Now - m_GoresLastDebugSummaryTime >= time_freq()))
 		{
+			m_GoresLastDebugSummaryTime = Now;
 			char aBuf[512];
 			const double AverageUs = m_GoresPredictionCpuTotal * 1000000.0 / (time_freq() * (double)m_GoresPredictionFrames);
 			const double InteractionAnalysisUs = m_GoresInteractionAnalysisCpuTotal * 1000000.0 / (time_freq() * (double)m_GoresPredictionFrames);
@@ -4518,7 +4529,7 @@ void CGameClient::OnPredict()
 				(unsigned long long)m_GoresFallbackCount, (unsigned long long)m_GoresHistoryFailureCount, (unsigned long long)m_GoresMetricValidationMissCount,
 				AverageUs, InteractionAnalysisUs, ConfidenceUs, (unsigned long long)m_GoresReconciliationSampleCount, MeanError, m_GoresReconciliationErrorMax,
 				(unsigned long long)m_GoresInteractionErrorCount, MeanInteractionError, (unsigned long long)m_GoresFreezeErrorCount, MeanFreezeError);
-			Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+			Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "gores_input", aBuf);
 
 			int PrintedPlayers = 0;
 			for(int ClientId = 0; ClientId < MAX_CLIENTS && PrintedPlayers < 8; ClientId++)
@@ -4534,7 +4545,7 @@ void CGameClient::OnPredict()
 					State.m_RecoveryDebt, State.m_AcceptedHorizon, State.m_PreInputCoveredHorizon,
 					State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresRequestedHorizon ? 1 : 0, m_aGoresInteractionGroup[ClientId] ? 1 : 0,
 					State.m_FirstFutureInteractionTick, State.m_InteractionType, State.m_HorizonReason, (State.m_RegularFreezeTransition || State.m_SpeculativeFreezeTransition) ? 1 : 0, State.m_RecentReconciliationError);
-				Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aPlayerBuf);
+				Console()->Print(IConsole::OUTPUT_LEVEL_ADDINFO, "gores_input", aPlayerBuf);
 				PrintedPlayers++;
 			}
 		}
@@ -5546,10 +5557,21 @@ void CGameClient::UpdateRenderedCharacters()
 		const bool GoresInteractionMember = IsGoresInputMode() && m_aGoresInteractionGroup[i];
 		if(Predict() && (i == m_Snap.m_LocalClientId || ((AntiPingPlayers() || (IsGoresInputMode() && (g_Config.m_BcGoresInputOthers || GoresInteractionMember))) && !IsOtherTeam(i))) && pChar)
 		{
-			const bool UseGoresLocalRenderCore = IsGoresInputMode() && i == m_Snap.m_LocalClientId &&
+			int GoresRequestedTick = Client()->PredGameTick(g_Config.m_ClDummy);
+			float GoresRequestedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+			BcInputs::ApplyOffset(m_GoresRequestedHorizon, GoresRequestedTick, GoresRequestedIntra);
+			const bool HasExactGoresRequestedHistory = GoresRequestedTick > 0 &&
+				m_aClients[i].m_aGoresPredTick[(GoresRequestedTick - 1) % 200] == GoresRequestedTick - 1 &&
+				m_aClients[i].m_aGoresPredTick[GoresRequestedTick % 200] == GoresRequestedTick &&
+				m_aClients[i].m_aGoresPredGeneration[(GoresRequestedTick - 1) % 200] == m_GoresPredictionGeneration &&
+				m_aClients[i].m_aGoresPredGeneration[GoresRequestedTick % 200] == m_GoresPredictionGeneration;
+			const bool UseGoresRequestedRenderCore = IsGoresInputMode() &&
 				m_aClients[i].m_GoresRenderValid && m_aClients[i].m_GoresRenderGeneration == m_GoresPredictionGeneration &&
-				absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f;
-			if(UseGoresLocalRenderCore)
+				HasExactGoresRequestedHistory &&
+				((i == m_Snap.m_LocalClientId && absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f) ||
+				(i != m_Snap.m_LocalClientId && ((GoresInteractionMember && absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f) ||
+				(g_Config.m_BcGoresInputOthers && !IsFastInputLocalClient(i)))));
+			if(UseGoresRequestedRenderCore)
 			{
 				m_aClients[i].m_GoresRenderCur.Write(&m_aClients[i].m_RenderCur);
 				m_aClients[i].m_GoresRenderPrev.Write(&m_aClients[i].m_RenderPrev);
@@ -5968,12 +5990,12 @@ vec2 CGameClient::GetGoresInputPos(int ClientId)
 	float Offset = m_GoresRequestedHorizon;
 	if(ClientId == m_Snap.m_LocalClientId)
 		Offset = m_GoresAcceptedHorizon;
-	else if(m_GoresInteractionClientId >= 0 && m_aGoresInteractionGroup[ClientId])
+	else if(m_aGoresInteractionGroup[ClientId])
 		Offset = m_GoresAcceptedHorizon;
 	else if(IsFastInputLocalClient(ClientId))
 		Offset = m_aClients[ClientId].m_GoresPrediction.m_AcceptedHorizon;
 	else if(!IsFastInputLocalClient(ClientId))
-		Offset = g_Config.m_BcGoresInputOthers ? minimum(Offset, m_aClients[ClientId].m_GoresPrediction.m_AcceptedHorizon) : 0.0f;
+		Offset = g_Config.m_BcGoresInputOthers ? m_GoresRequestedHorizon : 0.0f;
 
 	int Tick = Client()->PredGameTick(g_Config.m_ClDummy);
 	float Intra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
