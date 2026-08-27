@@ -367,6 +367,7 @@ void CCharacter::FireWeapon()
 			pTarget->TakeDamage(Force, g_pData->m_Weapons.m_Hammer.m_pBase->m_Damage,
 				GetCid(), m_Core.m_ActiveWeapon);
 			pTarget->Unfreeze();
+			m_aLastHammerHitTick[pTarget->GetCid()] = GameWorld()->GameTick();
 
 			Hits++;
 		}

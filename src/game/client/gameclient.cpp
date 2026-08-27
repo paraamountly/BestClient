@@ -87,6 +87,92 @@
 
 using namespace std::chrono_literals;
 
+namespace
+{
+enum EGoresHorizonReason
+{
+	GORES_REASON_NONE = 0,
+	GORES_REASON_ASSUMED_INPUT = 1 << 0,
+	GORES_REASON_PARTIAL_PREINPUT = 1 << 1,
+	GORES_REASON_HISTORY_GAP = 1 << 2,
+	GORES_REASON_DIRECTION_CHANGE = 1 << 3,
+	GORES_REASON_HOOK_CHANGE = 1 << 4,
+	GORES_REASON_MOTION_CHANGE = 1 << 5,
+	GORES_REASON_INTERACTION = 1 << 6,
+	GORES_REASON_FUTURE_INTERACTION = 1 << 7,
+	GORES_REASON_FREEZE_TRANSITION = 1 << 8,
+	GORES_REASON_RECOVERY_DEBT = 1 << 9,
+};
+
+enum EGoresInteractionType
+{
+	GORES_INTERACTION_NONE = 0,
+	GORES_INTERACTION_LOCAL_HOOK,
+	GORES_INTERACTION_REMOTE_HOOK,
+	GORES_INTERACTION_PROXIMITY,
+	GORES_INTERACTION_HAMMER,
+};
+
+constexpr int GORES_RECOVERY_DEBT_MAX = 8;
+constexpr int GORES_FREEZE_RECOVERY_DEBT = 10;
+constexpr int GORES_INTERACTION_HYSTERESIS_TICKS = 3;
+
+float GoresConfidenceHorizon(float Confidence, float RequestedHorizon, float PreInputCoveredHorizon)
+{
+	float Horizon = 0.0f;
+	if(Confidence >= 0.90f)
+		Horizon = 1.0f;
+	else if(Confidence >= 0.70f)
+		Horizon = 0.75f;
+	else if(Confidence >= 0.45f)
+		Horizon = 0.50f;
+	else if(Confidence >= 0.20f)
+		Horizon = 0.25f;
+
+	const bool FullPreInputCoverage = PreInputCoveredHorizon + 0.0001f >= RequestedHorizon;
+	if(FullPreInputCoverage && Confidence > 0.90f)
+		Horizon = RequestedHorizon;
+	return std::clamp(Horizon, 0.0f, RequestedHorizon);
+}
+
+bool GoresCharacterFrozen(CCharacter &Character)
+{
+	const CCharacterCore &Core = Character.GetCore();
+	return Character.m_FreezeTime > 0 || Core.m_DeepFrozen || Core.m_LiveFrozen;
+}
+
+bool GoresCharactersColliding(CCharacter &Character, CCharacter &Other)
+{
+	const CCharacterCore &Core = Character.GetCore();
+	const CCharacterCore &OtherCore = Other.GetCore();
+	if(!Character.CanCollide(Other.GetCid()))
+		return false;
+	if(!(Core.m_Super || OtherCore.m_Super) && (Core.m_Solo || OtherCore.m_Solo))
+		return false;
+	const bool CollisionEnabled = (Core.m_Super || OtherCore.m_Super) ||
+		(!Core.m_CollisionDisabled && !OtherCore.m_CollisionDisabled && (Core.m_Tuning.m_PlayerCollision || OtherCore.m_Tuning.m_PlayerCollision));
+	const float Distance = distance(Core.m_Pos, OtherCore.m_Pos);
+	return CollisionEnabled && Distance > 0.0f && Distance < CCharacterCore::PhysicalSize() * 1.25f;
+}
+
+void UpdateGoresConfidenceHorizon(CGameClient::CClientData::SGoresPredictionState &State, float RequestedHorizon)
+{
+	const float RecoveryFactor = std::clamp(1.0f - State.m_RecoveryDebt / (float)GORES_FREEZE_RECOVERY_DEBT, 0.0f, 1.0f);
+	if(State.m_RecoveryDebt > 0)
+		State.m_HorizonReason |= GORES_REASON_RECOVERY_DEBT;
+	State.m_Confidence = std::clamp(minimum(State.m_InputConfidence, State.m_HistoryConfidence, State.m_MotionConfidence) * State.m_InteractionConfidence * RecoveryFactor, 0.0f, 1.0f);
+	State.m_AcceptedHorizon = GoresConfidenceHorizon(State.m_Confidence, RequestedHorizon, State.m_PreInputCoveredHorizon);
+	if(State.m_RegularFreezeTransition)
+		State.m_AcceptedHorizon = 0.0f;
+}
+
+float GoresLocalRecoveryHorizon(int RecoveryDebt, float RequestedHorizon)
+{
+	const float Recovery = std::clamp(1.0f - RecoveryDebt / (float)GORES_FREEZE_RECOVERY_DEBT, 0.0f, 1.0f);
+	return RequestedHorizon * Recovery;
+}
+} // namespace
+
 const char *CGameClient::Version() const { return GAME_VERSION; }
 const char *CGameClient::NetVersion() const { return GAME_NETVERSION; }
 const char *CGameClient::NetVersion7() const { return GAME_NETVERSION7; }
@@ -263,15 +349,15 @@ void CGameClient::OnConsoleInit()
 					      &m_Ghost,
 					      &m_TClient, // TClient (Must be before chat and players)
 					      &m_Players,
-						  &m_MovingTilesBackground, // TClient
-						  &m_FastPractice, // BestClient
-						  &m_CloudInput, // BestClient
-						  &m_BcAutoMargin, // BestClient
-						  &m_MapLayersForeground,
-						  &m_MovingTilesForeground, // TClient
+					      &m_MovingTilesBackground, // TClient
+					      &m_FastPractice, // BestClient
+					      &m_CloudInput, // BestClient
+					      &m_BcAutoMargin, // BestClient
+					      &m_MapLayersForeground,
+					      &m_MovingTilesForeground, // TClient
 					      &m_SelfTimeCp, // BestClient
 					      &m_ShowPoints, // BestClient
-					      &m_Outlines,  // TClient
+					      &m_Outlines, // TClient
 					      &m_Mumble, // TClient
 					      &m_Pet, // TClient
 					      &m_ClientIndicator, // BestClient
@@ -855,6 +941,26 @@ void CGameClient::OnReset()
 
 	for(auto &Client : m_aClients)
 		Client.Reset();
+	m_GoresWasActive = false;
+	m_GoresPredictionGeneration = 0;
+	m_GoresInteractionClientId = -1;
+	m_GoresRequestedHorizon = 0.0f;
+	m_GoresAcceptedHorizon = 0.0f;
+	m_GoresLastLoggedAcceptedHorizon = -1.0f;
+	m_GoresFallbackCount = 0;
+	m_GoresHistoryFailureCount = 0;
+	m_GoresMetricValidationMissCount = 0;
+	m_GoresReconciliationSampleCount = 0;
+	m_GoresReconciliationErrorTotal = 0.0;
+	m_GoresReconciliationErrorMax = 0.0f;
+	m_GoresInteractionErrorCount = 0;
+	m_GoresInteractionErrorTotal = 0.0;
+	m_GoresFreezeErrorCount = 0;
+	m_GoresFreezeErrorTotal = 0.0;
+	m_GoresPredictionCpuTotal = 0;
+	m_GoresInteractionAnalysisCpuTotal = 0;
+	m_GoresConfidenceCpuTotal = 0;
+	m_GoresPredictionFrames = 0;
 
 	for(auto &Stats : m_aStats)
 		Stats.Reset();
@@ -2114,6 +2220,72 @@ void CGameClient::InvalidateSnapshot()
 
 void CGameClient::OnNewSnapshot()
 {
+	if(IsGoresInputMode() && m_Snap.m_LocalClientId >= 0)
+	{
+		m_GoresPreSnapshotInteraction = m_GoresInteractionClientId >= 0;
+		m_GoresPreSnapshotFreezeTransition = m_GoresLocalFreezeTransition;
+		m_GoresPreSnapshotTargetTick = Client()->PredGameTick(g_Config.m_ClDummy);
+		m_GoresPreSnapshotTargetIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+		BcInputs::ApplyOffset(m_GoresAcceptedHorizon, m_GoresPreSnapshotTargetTick, m_GoresPreSnapshotTargetIntra);
+		const CClientData &LocalClient = m_aClients[m_Snap.m_LocalClientId];
+		const bool ValidOldForecast = m_GoresPreSnapshotTargetTick > 0 &&
+			LocalClient.m_aGoresPredTick[(m_GoresPreSnapshotTargetTick - 1) % 200] == m_GoresPreSnapshotTargetTick - 1 &&
+			LocalClient.m_aGoresPredTick[m_GoresPreSnapshotTargetTick % 200] == m_GoresPreSnapshotTargetTick &&
+			LocalClient.m_aGoresPredGeneration[(m_GoresPreSnapshotTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
+			LocalClient.m_aGoresPredGeneration[m_GoresPreSnapshotTargetTick % 200] == m_GoresPredictionGeneration;
+		m_GoresMeasureSnapshotCorrection = ValidOldForecast;
+		if(ValidOldForecast)
+		{
+			m_GoresPreSnapshotForecastPos = mix(
+				LocalClient.m_aGoresPredPos[(m_GoresPreSnapshotTargetTick - 1) % 200],
+				LocalClient.m_aGoresPredPos[m_GoresPreSnapshotTargetTick % 200],
+				m_GoresPreSnapshotTargetIntra);
+		}
+		else
+		{
+			m_GoresMetricValidationMissCount++;
+			if(g_Config.m_BcGoresInputDebug)
+				Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", "reconciliation metric old-forecast validation miss");
+		}
+	}
+	else
+	{
+		m_GoresMeasureSnapshotCorrection = false;
+	}
+	if(IsGoresInputMode())
+	{
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(ClientId == m_Snap.m_LocalClientId || !m_Snap.m_aCharacters[ClientId].m_Active)
+				continue;
+			auto &State = m_aClients[ClientId].m_GoresPrediction;
+			State.m_ReconciliationPending = false;
+			const bool InteractionMember = m_aGoresInteractionGroup[ClientId];
+			if(!InteractionMember && !g_Config.m_BcGoresInputOthers)
+				continue;
+			float Offset = InteractionMember ? m_GoresAcceptedHorizon : State.m_AcceptedHorizon;
+			State.m_PreSnapshotTargetTick = Client()->PredGameTick(g_Config.m_ClDummy);
+			State.m_PreSnapshotTargetIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+			BcInputs::ApplyOffset(Offset, State.m_PreSnapshotTargetTick, State.m_PreSnapshotTargetIntra);
+			const bool ValidOldForecast = State.m_PreSnapshotTargetTick > 0 &&
+				m_aClients[ClientId].m_aGoresPredTick[(State.m_PreSnapshotTargetTick - 1) % 200] == State.m_PreSnapshotTargetTick - 1 &&
+				m_aClients[ClientId].m_aGoresPredTick[State.m_PreSnapshotTargetTick % 200] == State.m_PreSnapshotTargetTick &&
+				m_aClients[ClientId].m_aGoresPredGeneration[(State.m_PreSnapshotTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
+				m_aClients[ClientId].m_aGoresPredGeneration[State.m_PreSnapshotTargetTick % 200] == m_GoresPredictionGeneration;
+			if(!ValidOldForecast)
+			{
+				m_GoresMetricValidationMissCount++;
+				continue;
+			}
+			State.m_PreSnapshotForecastPos = mix(
+				m_aClients[ClientId].m_aGoresPredPos[(State.m_PreSnapshotTargetTick - 1) % 200],
+				m_aClients[ClientId].m_aGoresPredPos[State.m_PreSnapshotTargetTick % 200],
+				State.m_PreSnapshotTargetIntra);
+			State.m_PreSnapshotInteraction = InteractionMember;
+			State.m_PreSnapshotFreezeTransition = State.m_RegularFreezeTransition || State.m_SpeculativeFreezeTransition;
+			State.m_ReconciliationPending = true;
+		}
+	}
 	auto &&Evolve = [this](CNetObj_Character *pCharacter, int Tick) {
 		CWorldCore TempWorld;
 		CCharacterCore TempCore = CCharacterCore();
@@ -3015,6 +3187,19 @@ bool CGameClient::IsCloudInputMode() const
 	return m_CloudInput.IsActive();
 }
 
+bool CGameClient::IsGoresInputMode() const
+{
+	return g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputAmount > 0;
+}
+
+bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
+{
+	if(!g_Config.m_ClAntiPingPreInput || ClientId < 0 || ClientId >= MAX_CLIENTS || Tick <= 0)
+		return false;
+	const CNetMsg_Sv_PreInput &PreInput = m_aClients[ClientId].m_aPreInputs[Tick % 200];
+	return PreInput.m_Owner == ClientId && PreInput.m_IntendedTick == Tick;
+}
+
 bool CGameClient::IsFastInputLocalClient(int ClientId) const
 {
 	return ClientId == m_Snap.m_LocalClientId || (PredictDummy() && ClientId == m_aLocalIds[!g_Config.m_ClDummy]);
@@ -3062,6 +3247,7 @@ void CGameClient::ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld)
 
 void CGameClient::OnPredict()
 {
+	const int64_t GoresPredictionStart = IsGoresInputMode() ? time_get() : 0;
 	// store the previous values so we can detect prediction errors
 	CCharacterCore BeforePrevChar = m_PredictedPrevChar;
 	CCharacterCore BeforeChar = m_PredictedChar;
@@ -3069,6 +3255,10 @@ void CGameClient::OnPredict()
 	// we can't predict without our own id or own character
 	if(m_Snap.m_LocalClientId == -1 || !m_Snap.m_aCharacters[m_Snap.m_LocalClientId].m_Active)
 	{
+		if(IsGoresInputMode())
+			for(auto &Client : m_aClients)
+				Client.m_GoresPrediction = {};
+		m_GoresWasActive = false;
 		if(m_FastPractice.Enabled()) // BestClient
 			m_FastPractice.SyncFromPrediction();
 		return;
@@ -3077,6 +3267,10 @@ void CGameClient::OnPredict()
 	// don't predict anything if we are paused
 	if(m_Snap.m_pGameInfoObj && m_Snap.m_pGameInfoObj->m_GameStateFlags & GAMESTATEFLAG_PAUSED)
 	{
+		if(IsGoresInputMode())
+			for(auto &Client : m_aClients)
+				Client.m_GoresPrediction = {};
+		m_GoresWasActive = false;
 		if(m_Snap.m_pLocalCharacter)
 		{
 			m_PredictedChar.Read(m_Snap.m_pLocalCharacter);
@@ -3093,13 +3287,21 @@ void CGameClient::OnPredict()
 	}
 
 	const bool CloudInputMode = IsCloudInputMode();
+	const bool GoresInputMode = IsGoresInputMode();
+	if(GoresInputMode && !m_GoresWasActive)
+	{
+		for(auto &Client : m_aClients)
+			Client.m_GoresPrediction = {};
+		m_GoresLastLoggedAcceptedHorizon = -1.0f;
+	}
+	m_GoresWasActive = GoresInputMode;
 	vec2 aBeforeRender[MAX_CLIENTS];
 	for(int i = 0; i < MAX_CLIENTS; i++)
 	{
 		// Cloud must not feed GetSmoothPos back into ClAntiPingSmooth: during an active
 		// smooth that returns a near-GameTime pose, every snap looks like a huge error and
 		// the smooth restarts — visual locks to snap rate (~15 FPS) on old kernels.
-		if(CloudInputMode)
+		if(CloudInputMode || GoresInputMode)
 			aBeforeRender[i] = mix(m_aClients[i].m_PrevPredicted.m_Pos, m_aClients[i].m_Predicted.m_Pos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
 		else
 			aBeforeRender[i] = GetSmoothPos(i);
@@ -3144,12 +3346,40 @@ void CGameClient::OnPredict()
 	if(PredictDummy())
 		pDummyChar = m_PredictedWorld.GetCharacterById(m_aLocalIds[!g_Config.m_ClDummy]);
 
+	m_GoresRequestedHorizon = GoresInputMode ? g_Config.m_BcGoresInputAmount / 100.0f : 0.0f;
+	m_GoresAcceptedHorizon = m_GoresRequestedHorizon;
+	m_GoresInteractionClientId = -1;
+	m_GoresInteractionPreInputBacked = false;
+	m_GoresLocalFreezeTransition = false;
+	std::fill(std::begin(m_aGoresInteractionGroup), std::end(m_aGoresInteractionGroup), false);
+	if(GoresInputMode)
+	{
+		if(m_GoresPredictionGeneration == std::numeric_limits<int>::max())
+			m_GoresPredictionGeneration = 1;
+		else
+			m_GoresPredictionGeneration++;
+		const int BaseTick = Client()->GameTick(g_Config.m_ClDummy);
+		m_aClients[m_Snap.m_LocalClientId].m_GoresRenderValid = false;
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			m_aClients[ClientId].m_GoresPrediction.m_RegularFreezeTransition = false;
+			m_aClients[ClientId].m_GoresPrediction.m_SpeculativeFreezeTransition = false;
+			if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
+			{
+				m_aClients[ClientId].m_GoresPrediction.m_FirstFutureInteractionTick = -1;
+				m_aClients[ClientId].m_aGoresPredPos[BaseTick % 200] = pChar->Core()->m_Pos;
+				m_aClients[ClientId].m_aGoresPredTick[BaseTick % 200] = BaseTick;
+				m_aClients[ClientId].m_aGoresPredGeneration[BaseTick % 200] = m_GoresPredictionGeneration;
+			}
+		}
+	}
+
 	bool RealPredTick = false;
 	// predict
 
-	const float FastInputOffsetTicks = CloudInputMode ? 0.0f : BcInputs::EffectiveOffsetTicks();
+	const float FastInputOffsetTicks = CloudInputMode ? 0.0f : (GoresInputMode ? m_GoresRequestedHorizon : BcInputs::EffectiveOffsetTicks());
 	const int FastInputTicks = CloudInputMode ? m_CloudInput.SelfTickOffset() : BcInputs::PredictionTicks(FastInputOffsetTicks);
-	const bool FastInputOthers = CloudInputMode ? (g_Config.m_BcCloudInputOthers != 0 && m_ReceivedPreInput) : BcInputs::AnyOthers();
+	const bool FastInputOthers = CloudInputMode ? (g_Config.m_BcCloudInputOthers != 0 && m_ReceivedPreInput) : (GoresInputMode || BcInputs::AnyOthers());
 	const int FastInputTicksOthers = CloudInputMode ? (FastInputOthers ? m_CloudInput.OthersTickOffset() : 0) : (FastInputOthers ? BcInputs::PredictionTicksOthers(FastInputOffsetTicks) : 0);
 
 	int FinalTickRegular = Client()->PredGameTick(g_Config.m_ClDummy); // The vanilla final tick disregarding fast input
@@ -3159,17 +3389,29 @@ void CGameClient::OnPredict()
 
 	int LocalTee = g_Config.m_ClDummy ^ m_IsDummySwapping;
 	int DummyTee = LocalTee ^ 1;
+	bool aGoresRegularFrozen[MAX_CLIENTS] = {};
+	int GoresPredictedLocalTransitionTick = -1;
+	float GoresPredictedLocalTransitionSafeHorizon = 0.0f;
+	bool GoresPredictedLocalFrozen = false;
+	int aGoresPredictedRemoteFreezeTick[MAX_CLIENTS] = {};
+	float aGoresPredictedRemoteFreezeSafeHorizon[MAX_CLIENTS] = {};
+	bool aGoresPredictedRemoteFrozen[MAX_CLIENTS] = {};
+	bool GoresSharedHorizonDowngraded = false;
+	bool GoresLocalTrajectoryInvalid = false;
+	std::fill(std::begin(aGoresPredictedRemoteFreezeTick), std::end(aGoresPredictedRemoteFreezeTick), -1);
 
 	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTickSelf; Tick++)
 	{
 		// fetch the previous characters
-		if(Tick == FinalTickSelf)
+		if(Tick == FinalTickSelf && !GoresInputMode)
 		{
 			m_PrevPredictedWorld.CopyWorld(&m_PredictedWorld);
 			m_PredictedPrevChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
 		}
-		if(Tick == FinalTickOthers)
+		else if(Tick == FinalTickSelf)
+			m_aClients[m_Snap.m_LocalClientId].m_GoresRenderPrev = pLocalChar->GetCore();
+		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
 			for(int i = 0; i < MAX_CLIENTS; i++)
 				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(i))
@@ -3178,11 +3420,20 @@ void CGameClient::OnPredict()
 
 		if(Tick == Client()->PredGameTick(g_Config.m_ClDummy))
 		{
+			if(GoresInputMode)
+			{
+				m_PrevPredictedWorld.CopyWorld(&m_PredictedWorld);
+				for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+					if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
+						m_aClients[ClientId].m_PrevPredicted = pChar->GetCore();
+			}
+			else
+			{
+				m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
+				if(pDummyChar)
+					m_aClients[m_aLocalIds[!g_Config.m_ClDummy]].m_PrevPredicted = pDummyChar->GetCore();
+			}
 			m_PredictedPrevChar = pLocalChar->GetCore();
-			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
-
-			if(pDummyChar)
-				m_aClients[m_aLocalIds[!g_Config.m_ClDummy]].m_PrevPredicted = pDummyChar->GetCore();
 		}
 
 		if(Tick == FinalTickRegular)
@@ -3208,7 +3459,7 @@ void CGameClient::OnPredict()
 		else if(FastInputTicks > 0 && Tick > FinalTickRegular)
 		{
 			pInputData = CloudInputMode ? &m_CloudInput.Input(LocalTee) : &m_Controls.m_aFastInput[LocalTee];
-			if(g_Config.m_BcInputs != BC_INPUTS_SAIKO && GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
+			if(g_Config.m_BcInputs != BC_INPUTS_SAIKO && g_Config.m_BcInputs != BC_INPUTS_GORES && GetDummyFastInput(DummyFastInput, pDummyInputData, pDummyChar, LocalTee, DummyTee))
 				pDummyInputData = &DummyFastInput;
 		}
 
@@ -3244,12 +3495,19 @@ void CGameClient::OnPredict()
 		m_PredictedWorld.m_WorldConfig.m_PredictEvents = TempPredEventState;
 
 		// fetch the current characters
-		if(Tick == FinalTickSelf)
+		if(Tick == FinalTickSelf && !GoresInputMode)
 		{
 			m_PredictedChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_Predicted = pLocalChar->GetCore();
 		}
-		if(Tick == FinalTickOthers)
+		else if(Tick == FinalTickSelf)
+		{
+			auto &LocalClient = m_aClients[m_Snap.m_LocalClientId];
+			LocalClient.m_GoresRenderCur = pLocalChar->GetCore();
+			LocalClient.m_GoresRenderGeneration = m_GoresPredictionGeneration;
+			LocalClient.m_GoresRenderValid = true;
+		}
+		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
 			for(int i = 0; i < MAX_CLIENTS; i++)
 				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(i))
@@ -3257,12 +3515,327 @@ void CGameClient::OnPredict()
 		}
 		if(Tick == FinalTickRegular)
 		{
-			for(int i = 0; i < MAX_CLIENTS; i++)
-				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(i))
-					m_aClients[i].m_RegularPredicted = pChar->GetCore();
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
+				{
+					m_aClients[ClientId].m_RegularPredicted = pChar->GetCore();
+					aGoresRegularFrozen[ClientId] = GoresCharacterFrozen(*pChar);
+					if(GoresInputMode)
+						m_aClients[ClientId].m_Predicted = pChar->GetCore();
+				}
+
+			if(GoresInputMode)
+			{
+				const int64_t ConfidenceStart = time_get();
+				m_PredictedChar = pLocalChar->GetCore();
+				m_aGoresInteractionGroup[m_Snap.m_LocalClientId] = true;
+				for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				{
+					if(!IsFastInputLocalClient(ClientId))
+						continue;
+					CCharacter *pLocalLike = m_PredictedWorld.GetCharacterById(ClientId);
+					if(!pLocalLike)
+						continue;
+					auto &State = m_aClients[ClientId].m_GoresPrediction;
+					const bool Frozen = GoresCharacterFrozen(*pLocalLike);
+					const bool NewEvaluationTick = State.m_LastEvaluationTick != FinalTickRegular;
+					State.m_RegularFreezeTransition = State.m_Initialized && NewEvaluationTick && Frozen != State.m_LastFrozen;
+					if(State.m_RegularFreezeTransition)
+					{
+						const int PreviousGeneration = m_GoresPredictionGeneration == 1 ? std::numeric_limits<int>::max() : m_GoresPredictionGeneration - 1;
+						const bool ExpectedLocalTransition = ClientId == m_Snap.m_LocalClientId &&
+							State.m_ExpectedFreezeTick == FinalTickRegular && State.m_ExpectedFreezeGeneration == PreviousGeneration && State.m_ExpectedFrozen == Frozen;
+						if(ExpectedLocalTransition)
+						{
+							State.m_ExpectedFreezeTick = -1;
+							State.m_ExpectedFreezeGeneration = 0;
+						}
+						else
+						{
+							State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+							State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
+							if(ClientId == m_Snap.m_LocalClientId || m_aGoresInteractionGroup[ClientId])
+							{
+								m_GoresLocalFreezeTransition = true;
+								m_GoresAcceptedHorizon = 0.0f;
+							}
+						}
+					}
+					else if(State.m_Initialized && NewEvaluationTick && State.m_RecoveryDebt > 0)
+						State.m_RecoveryDebt--;
+					State.m_Initialized = true;
+					State.m_LastFrozen = Frozen;
+					State.m_LastEvaluationTick = FinalTickRegular;
+					State.m_AcceptedHorizon = GoresLocalRecoveryHorizon(State.m_RecoveryDebt, m_GoresRequestedHorizon);
+					if(ClientId == m_Snap.m_LocalClientId)
+						m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, State.m_AcceptedHorizon);
+				}
+				const CCharacterCore &LocalCore = pLocalChar->GetCore();
+				for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				{
+					if(ClientId == m_Snap.m_LocalClientId)
+						continue;
+					CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+					if(!pOther)
+						continue;
+					const CCharacterCore &OtherCore = pOther->GetCore();
+					const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
+					const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
+					const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
+					const bool HammerInteraction = pLocalChar->m_aLastHammerHitTick[ClientId] == Tick || pOther->m_aLastHammerHitTick[m_Snap.m_LocalClientId] == Tick;
+					if(!HookedByLocal && !HookingLocal && !CollisionRisk && !HammerInteraction)
+						continue;
+					auto &GoresState = m_aClients[ClientId].m_GoresPrediction;
+					GoresState.m_InteractionUntilTick = FinalTickRegular + GORES_INTERACTION_HYSTERESIS_TICKS;
+					GoresState.m_InteractionType = HammerInteraction ? GORES_INTERACTION_HAMMER : HookedByLocal ? GORES_INTERACTION_LOCAL_HOOK : HookingLocal ? GORES_INTERACTION_REMOTE_HOOK : GORES_INTERACTION_PROXIMITY;
+					if(GoresState.m_RegularFreezeTransition)
+					{
+						m_GoresLocalFreezeTransition = true;
+						m_GoresAcceptedHorizon = 0.0f;
+					}
+					m_aGoresInteractionGroup[ClientId] = true;
+					if(m_GoresInteractionClientId < 0)
+						m_GoresInteractionClientId = ClientId;
+				}
+				for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				{
+					if(ClientId == m_Snap.m_LocalClientId || m_aGoresInteractionGroup[ClientId])
+						continue;
+					const auto &State = m_aClients[ClientId].m_GoresPrediction;
+					if(State.m_InteractionUntilTick < FinalTickRegular || !m_PredictedWorld.GetCharacterById(ClientId))
+						continue;
+					m_aGoresInteractionGroup[ClientId] = true;
+					if(m_GoresInteractionClientId < 0)
+						m_GoresInteractionClientId = ClientId;
+				}
+
+				for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+				{
+					if(ClientId == m_Snap.m_LocalClientId || IsFastInputLocalClient(ClientId))
+						continue;
+					CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+					auto &State = m_aClients[ClientId].m_GoresPrediction;
+					if(!pOther || !m_Snap.m_aCharacters[ClientId].m_Active)
+					{
+						State = {};
+						continue;
+					}
+
+					State.m_HorizonReason = GORES_REASON_NONE;
+					int CoveredTicks = 0;
+					const int RequiredTicks = (int)std::ceil(m_GoresRequestedHorizon);
+					for(int ExtraTick = 1; ExtraTick <= RequiredTicks; ExtraTick++)
+					{
+						if(!HasExactPreInput(ClientId, FinalTickRegular + ExtraTick))
+							break;
+						CoveredTicks++;
+					}
+					State.m_PreInputCoveredHorizon = CoveredTicks == RequiredTicks ? m_GoresRequestedHorizon : minimum(m_GoresRequestedHorizon, (float)CoveredTicks);
+					if(CoveredTicks == RequiredTicks)
+						State.m_InputConfidence = 1.0f;
+					else if(CoveredTicks > 0)
+					{
+						State.m_InputConfidence = 0.70f;
+						State.m_HorizonReason |= GORES_REASON_PARTIAL_PREINPUT;
+					}
+					else
+					{
+						State.m_InputConfidence = 0.35f;
+						State.m_HorizonReason |= GORES_REASON_ASSUMED_INPUT;
+					}
+
+					bool ContiguousHistory = FinalTickRegular > 3;
+					for(int HistoryTick = FinalTickRegular - 3; ContiguousHistory && HistoryTick < FinalTickRegular; HistoryTick++)
+						ContiguousHistory = m_aClients[ClientId].m_aPredTick[HistoryTick % 200] == HistoryTick;
+					State.m_HistoryConfidence = ContiguousHistory ? 1.0f : 0.0f;
+					if(!ContiguousHistory)
+						State.m_HorizonReason |= GORES_REASON_HISTORY_GAP;
+
+					const CNetObj_PlayerInput *pLatestInput = pOther->LatestInput();
+					const int Direction = pLatestInput ? pLatestInput->m_Direction : 0;
+					const int Hook = pLatestInput ? pLatestInput->m_Hook : 0;
+					const bool Frozen = GoresCharacterFrozen(*pOther);
+					const vec2 Velocity = pOther->GetCore().m_Vel;
+					const bool NewEvaluationTick = State.m_LastEvaluationTick != FinalTickRegular;
+					if(!State.m_Initialized)
+					{
+						State.m_Initialized = true;
+						State.m_MotionConfidence = 0.55f;
+						State.m_LastDirection = Direction;
+						State.m_LastHook = Hook;
+						State.m_LastFrozen = Frozen;
+						State.m_LastVelocity = Velocity;
+					}
+					else if(NewEvaluationTick)
+					{
+						bool Stable = true;
+						if(Direction != 0 && State.m_LastDirection != 0 && Direction != State.m_LastDirection)
+						{
+							State.m_MotionConfidence = 0.10f;
+							State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_RECOVERY_DEBT_MAX);
+							State.m_HorizonReason |= GORES_REASON_DIRECTION_CHANGE;
+							Stable = false;
+						}
+						if(Hook != State.m_LastHook)
+						{
+							State.m_MotionConfidence = minimum(State.m_MotionConfidence, 0.20f);
+							State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_RECOVERY_DEBT_MAX);
+							State.m_HorizonReason |= GORES_REASON_HOOK_CHANGE;
+							Stable = false;
+						}
+						if(distance(Velocity, State.m_LastVelocity) > 4.0f)
+						{
+							State.m_MotionConfidence = minimum(State.m_MotionConfidence, 0.35f);
+							State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_RECOVERY_DEBT_MAX / 2);
+							State.m_HorizonReason |= GORES_REASON_MOTION_CHANGE;
+							Stable = false;
+						}
+						State.m_RegularFreezeTransition = Frozen != State.m_LastFrozen;
+						if(State.m_RegularFreezeTransition)
+						{
+							const int PreviousGeneration = m_GoresPredictionGeneration == 1 ? std::numeric_limits<int>::max() : m_GoresPredictionGeneration - 1;
+							const bool ExpectedInteractionFreeze = m_aGoresInteractionGroup[ClientId] &&
+								State.m_ExpectedFreezeTick == FinalTickRegular && State.m_ExpectedFreezeGeneration == PreviousGeneration && State.m_ExpectedFrozen == Frozen;
+							if(ExpectedInteractionFreeze)
+							{
+								State.m_ExpectedFreezeTick = -1;
+								State.m_ExpectedFreezeGeneration = 0;
+							}
+							else
+							{
+								State.m_MotionConfidence = 0.0f;
+								State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+								State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
+								Stable = false;
+							}
+						}
+						if(Stable)
+						{
+							State.m_StableInputTicks++;
+							State.m_MotionConfidence = std::clamp(0.55f + State.m_StableInputTicks * 0.08f, 0.0f, 1.0f);
+							if(State.m_RecoveryDebt > 0)
+								State.m_RecoveryDebt--;
+						}
+						else
+							State.m_StableInputTicks = 0;
+						State.m_LastDirection = Direction;
+						State.m_LastHook = Hook;
+						State.m_LastFrozen = Frozen;
+						State.m_LastVelocity = Velocity;
+					}
+					State.m_LastEvaluationTick = FinalTickRegular;
+
+					if(!ContiguousHistory)
+						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_RECOVERY_DEBT_MAX);
+					const bool InteractionMember = m_aGoresInteractionGroup[ClientId];
+					State.m_InteractionConfidence = InteractionMember ? 0.75f : 1.0f;
+					if(InteractionMember)
+						State.m_HorizonReason |= GORES_REASON_INTERACTION;
+					UpdateGoresConfidenceHorizon(State, m_GoresRequestedHorizon);
+				}
+				m_GoresConfidenceCpuTotal += time_get() - ConfidenceStart;
+
+				if(m_GoresInteractionClientId >= 0)
+				{
+					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, g_Config.m_BcGoresInputInteractionAmount / 100.0f);
+					bool AllPreInputBacked = true;
+					for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+					{
+						if(!m_aGoresInteractionGroup[ClientId] || ClientId == m_Snap.m_LocalClientId)
+							continue;
+						const auto &State = m_aClients[ClientId].m_GoresPrediction;
+						if(!IsFastInputLocalClient(ClientId))
+						{
+							if(State.m_HistoryConfidence <= 0.0f)
+								m_GoresAcceptedHorizon = 0.0f;
+							AllPreInputBacked &= State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresAcceptedHorizon;
+						}
+					}
+					m_GoresInteractionPreInputBacked = AllPreInputBacked;
+				}
+			}
 		}
 
-		if(Tick == Client()->PredGameTick(g_Config.m_ClDummy))
+		if(GoresInputMode && Tick > FinalTickRegular)
+		{
+			const int64_t InteractionAnalysisStart = time_get();
+			const float ExtraTick = (float)(Tick - FinalTickRegular);
+			const float RequestedTarget = Client()->PredIntraGameTick(g_Config.m_ClDummy) + m_GoresRequestedHorizon;
+			const bool BeforeRequestedTarget = ExtraTick <= RequestedTarget + 0.0001f;
+			const float SafeHorizon = std::clamp(ExtraTick - Client()->PredIntraGameTick(g_Config.m_ClDummy), 0.0f, m_GoresRequestedHorizon);
+			const bool LocalFreezeTransition = GoresCharacterFrozen(*pLocalChar) != aGoresRegularFrozen[m_Snap.m_LocalClientId];
+			if(LocalFreezeTransition && BeforeRequestedTarget)
+			{
+				m_GoresLocalFreezeTransition = true;
+				if(GoresPredictedLocalTransitionTick < 0)
+				{
+					GoresPredictedLocalTransitionTick = Tick;
+					GoresPredictedLocalTransitionSafeHorizon = SafeHorizon;
+					GoresPredictedLocalFrozen = GoresCharacterFrozen(*pLocalChar);
+				}
+			}
+
+			const CCharacterCore &LocalCore = pLocalChar->GetCore();
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+			{
+				if(ClientId == m_Snap.m_LocalClientId)
+					continue;
+				CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+				if(!pOther)
+					continue;
+				auto &State = m_aClients[ClientId].m_GoresPrediction;
+				const CCharacterCore &OtherCore = pOther->GetCore();
+				const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
+				const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
+				const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
+				const bool HammerInteraction = pLocalChar->m_aLastHammerHitTick[ClientId] == Tick || pOther->m_aLastHammerHitTick[m_Snap.m_LocalClientId] == Tick;
+				const bool FutureInteraction = BeforeRequestedTarget && (HookedByLocal || HookingLocal || CollisionRisk || HammerInteraction);
+				if(FutureInteraction && State.m_FirstFutureInteractionTick < 0)
+				{
+					State.m_FirstFutureInteractionTick = Tick;
+					State.m_InteractionType = HammerInteraction ? GORES_INTERACTION_HAMMER : HookedByLocal ? GORES_INTERACTION_LOCAL_HOOK : HookingLocal ? GORES_INTERACTION_REMOTE_HOOK : GORES_INTERACTION_PROXIMITY;
+					State.m_InteractionUntilTick = Tick + GORES_INTERACTION_HYSTERESIS_TICKS;
+					State.m_InteractionConfidence = 0.75f;
+					State.m_HorizonReason |= GORES_REASON_FUTURE_INTERACTION;
+					m_aGoresInteractionGroup[ClientId] = true;
+					const bool FirstInteractionMember = m_GoresInteractionClientId < 0;
+					if(m_GoresInteractionClientId < 0)
+						m_GoresInteractionClientId = ClientId;
+					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, g_Config.m_BcGoresInputInteractionAmount / 100.0f);
+					if(!IsFastInputLocalClient(ClientId) && State.m_HistoryConfidence <= 0.0f)
+						m_GoresAcceptedHorizon = 0.0f;
+					if(FirstInteractionMember)
+						m_GoresInteractionPreInputBacked = true;
+					if(!IsFastInputLocalClient(ClientId))
+						m_GoresInteractionPreInputBacked &= State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresAcceptedHorizon;
+				}
+
+				const bool FreezeTransition = GoresCharacterFrozen(*pOther) != aGoresRegularFrozen[ClientId];
+				if(FreezeTransition && BeforeRequestedTarget)
+				{
+					State.m_SpeculativeFreezeTransition = true;
+					State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
+					if(m_aGoresInteractionGroup[ClientId])
+					{
+						m_GoresLocalFreezeTransition = true;
+						if(aGoresPredictedRemoteFreezeTick[ClientId] < 0)
+						{
+							aGoresPredictedRemoteFreezeTick[ClientId] = Tick;
+							aGoresPredictedRemoteFreezeSafeHorizon[ClientId] = SafeHorizon;
+							aGoresPredictedRemoteFrozen[ClientId] = GoresCharacterFrozen(*pOther);
+						}
+					}
+					else
+					{
+						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+						State.m_AcceptedHorizon = minimum(State.m_AcceptedHorizon, SafeHorizon);
+					}
+				}
+			}
+			m_GoresInteractionAnalysisCpuTotal += time_get() - InteractionAnalysisStart;
+		}
+
+		if(Tick == Client()->PredGameTick(g_Config.m_ClDummy) && !GoresInputMode)
 		{
 			m_PredictedChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_Predicted = pLocalChar->GetCore();
@@ -3274,6 +3847,14 @@ void CGameClient::OnPredict()
 		for(int i = 0; i < MAX_CLIENTS; i++)
 			if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(i))
 			{
+				if(GoresInputMode)
+				{
+					m_aClients[i].m_aGoresPredPos[Tick % 200] = pChar->Core()->m_Pos;
+					m_aClients[i].m_aGoresPredTick[Tick % 200] = Tick;
+					m_aClients[i].m_aGoresPredGeneration[Tick % 200] = m_GoresPredictionGeneration;
+					if(Tick > FinalTickRegular)
+						continue;
+				}
 				// BestClient: mixing neutral-input regular positions into a practice participant's
 				// history makes GetFastInputPos interpolate between the practice and the real tee.
 				if(PracticeActive && m_FastPractice.IsPracticeParticipant(i))
@@ -3379,7 +3960,7 @@ void CGameClient::OnPredict()
 
 	// detect mispredictions of other players and make corrections smoother when possible
 	// Cloud: skip — see aBeforeRender note above; smooth restart loop looks like snap-rate lag.
-	if(!CloudInputMode && g_Config.m_ClAntiPingSmooth &&
+	if(!CloudInputMode && !GoresInputMode && g_Config.m_ClAntiPingSmooth &&
 		Predict() && AntiPingPlayers() &&
 		m_NewTick && m_PredictedTick >= MIN_TICK &&
 		absolute(m_PredictedTick - Client()->PredGameTick(g_Config.m_ClDummy)) <= 1 &&
@@ -3444,7 +4025,7 @@ void CGameClient::OnPredict()
 	// Cloud without preinput-others: skip — ValidAntipingSmooth is cleared for render anyway,
 	// and the GameTick history walk is noisy on old kernels with snap gaps.
 	CCharacter *pSmoothLocalChar = m_PredSmoothingWorld.GetCharacterById(m_Snap.m_LocalClientId);
-	if(g_Config.m_TcAntiPingImproved &&
+	if(!GoresInputMode && g_Config.m_TcAntiPingImproved &&
 		(!CloudInputMode || FastInputOthers) &&
 		Predict() && AntiPingPlayers() &&
 		pSmoothLocalChar &&
@@ -3701,6 +4282,124 @@ void CGameClient::OnPredict()
 		}
 	}
 
+	if(GoresInputMode && GoresPredictedLocalTransitionTick >= 0)
+	{
+		auto &LocalState = m_aClients[m_Snap.m_LocalClientId].m_GoresPrediction;
+		int LocalTargetTick = Client()->PredGameTick(g_Config.m_ClDummy);
+		float LocalTargetIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+		BcInputs::ApplyOffset(m_GoresRequestedHorizon, LocalTargetTick, LocalTargetIntra);
+		const bool ValidLocalFreezeTrajectory = LocalTargetTick > 0 &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredTick[(LocalTargetTick - 1) % 200] == LocalTargetTick - 1 &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredTick[LocalTargetTick % 200] == LocalTargetTick &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredGeneration[(LocalTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredGeneration[LocalTargetTick % 200] == m_GoresPredictionGeneration;
+		if(ValidLocalFreezeTrajectory)
+		{
+			LocalState.m_ExpectedFreezeTick = GoresPredictedLocalTransitionTick;
+			LocalState.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
+			LocalState.m_ExpectedFrozen = GoresPredictedLocalFrozen;
+		}
+		else
+		{
+			LocalState.m_ExpectedFreezeTick = -1;
+			LocalState.m_ExpectedFreezeGeneration = 0;
+			m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, GoresPredictedLocalTransitionSafeHorizon);
+			m_GoresHistoryFailureCount++;
+			GoresLocalTrajectoryInvalid = true;
+		}
+	}
+	else if(GoresInputMode)
+	{
+		auto &LocalState = m_aClients[m_Snap.m_LocalClientId].m_GoresPrediction;
+		if(LocalState.m_ExpectedFreezeTick > FinalTickRegular)
+		{
+			LocalState.m_ExpectedFreezeTick = -1;
+			LocalState.m_ExpectedFreezeGeneration = 0;
+		}
+	}
+
+	if(GoresInputMode && m_GoresInteractionClientId >= 0 && m_GoresAcceptedHorizon > 0.0f)
+	{
+		const auto ValidSharedHorizon = [&](float Horizon) {
+			int SharedTick = Client()->PredGameTick(g_Config.m_ClDummy);
+			float SharedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+			BcInputs::ApplyOffset(Horizon, SharedTick, SharedIntra);
+			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+			{
+				if(!m_aGoresInteractionGroup[ClientId])
+					continue;
+				if(SharedTick <= 0 ||
+					m_aClients[ClientId].m_aGoresPredTick[(SharedTick - 1) % 200] != SharedTick - 1 ||
+					m_aClients[ClientId].m_aGoresPredTick[SharedTick % 200] != SharedTick ||
+					m_aClients[ClientId].m_aGoresPredGeneration[(SharedTick - 1) % 200] != m_GoresPredictionGeneration ||
+					m_aClients[ClientId].m_aGoresPredGeneration[SharedTick % 200] != m_GoresPredictionGeneration)
+					return false;
+			}
+			return true;
+		};
+
+		if(!ValidSharedHorizon(m_GoresAcceptedHorizon))
+		{
+			float ValidHorizon = 0.0f;
+			for(int Hundredths = (int)std::floor(m_GoresAcceptedHorizon * 100.0f + 0.0001f); Hundredths > 0; Hundredths--)
+			{
+				const float Candidate = Hundredths / 100.0f;
+				if(ValidSharedHorizon(Candidate))
+				{
+					ValidHorizon = Candidate;
+					break;
+				}
+			}
+			m_GoresAcceptedHorizon = ValidHorizon;
+			m_GoresHistoryFailureCount++;
+			GoresSharedHorizonDowngraded = true;
+		}
+	}
+
+	if(GoresInputMode)
+	{
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(ClientId == m_Snap.m_LocalClientId)
+				continue;
+			auto &State = m_aClients[ClientId].m_GoresPrediction;
+			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId] &&
+				aGoresPredictedRemoteFreezeSafeHorizon[ClientId] <= m_GoresAcceptedHorizon + 0.0001f)
+			{
+				State.m_ExpectedFreezeTick = aGoresPredictedRemoteFreezeTick[ClientId];
+				State.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
+				State.m_ExpectedFrozen = aGoresPredictedRemoteFrozen[ClientId];
+			}
+			else if(State.m_ExpectedFreezeTick > FinalTickRegular)
+			{
+				State.m_ExpectedFreezeTick = -1;
+				State.m_ExpectedFreezeGeneration = 0;
+			}
+		}
+	}
+
+	if(GoresInputMode)
+	{
+		if(m_GoresLastLoggedAcceptedHorizon < 0.0f)
+			m_GoresLastLoggedAcceptedHorizon = m_GoresAcceptedHorizon;
+		else if(absolute(m_GoresLastLoggedAcceptedHorizon - m_GoresAcceptedHorizon) > 0.0001f)
+		{
+			if(g_Config.m_BcGoresInputDebug)
+			{
+				const auto &LocalState = m_aClients[m_Snap.m_LocalClientId].m_GoresPrediction;
+				const char *pReason = GoresLocalTrajectoryInvalid ? "local_history" :
+					GoresSharedHorizonDowngraded ? "shared_history" :
+					LocalState.m_RecoveryDebt > 0 ? "freeze_recovery" :
+					m_GoresInteractionClientId >= 0 ? "interaction_cap" : "requested";
+				char aBuf[256];
+				str_format(aBuf, sizeof(aBuf), "local_horizon requested=%.2f old=%.2f new=%.2f reason=%s interaction=%d generation=%d",
+					m_GoresRequestedHorizon, m_GoresLastLoggedAcceptedHorizon, m_GoresAcceptedHorizon, pReason, m_GoresInteractionClientId, m_GoresPredictionGeneration);
+				Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+			}
+			m_GoresLastLoggedAcceptedHorizon = m_GoresAcceptedHorizon;
+		}
+	}
+
 	m_PredictedTick = FinalTickRegular;
 
 	if(m_NewPredictedTick)
@@ -3708,6 +4407,138 @@ void CGameClient::OnPredict()
 
 	// BestClient: tick the copied practice world after regular prediction
 	m_FastPractice.SyncFromPrediction();
+	if(GoresInputMode)
+	{
+		if(m_GoresMeasureSnapshotCorrection)
+		{
+			const int LocalClientId = m_Snap.m_LocalClientId;
+			const bool ValidRebuiltForecast = m_GoresPreSnapshotTargetTick > 0 &&
+				m_aClients[LocalClientId].m_aGoresPredTick[(m_GoresPreSnapshotTargetTick - 1) % 200] == m_GoresPreSnapshotTargetTick - 1 &&
+				m_aClients[LocalClientId].m_aGoresPredTick[m_GoresPreSnapshotTargetTick % 200] == m_GoresPreSnapshotTargetTick &&
+				m_aClients[LocalClientId].m_aGoresPredGeneration[(m_GoresPreSnapshotTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
+				m_aClients[LocalClientId].m_aGoresPredGeneration[m_GoresPreSnapshotTargetTick % 200] == m_GoresPredictionGeneration;
+			if(ValidRebuiltForecast)
+			{
+				const vec2 RebuiltForecast = mix(
+					m_aClients[LocalClientId].m_aGoresPredPos[(m_GoresPreSnapshotTargetTick - 1) % 200],
+					m_aClients[LocalClientId].m_aGoresPredPos[m_GoresPreSnapshotTargetTick % 200],
+					m_GoresPreSnapshotTargetIntra);
+				const float CorrectionDistance = distance(m_GoresPreSnapshotForecastPos, RebuiltForecast);
+				m_GoresReconciliationSampleCount++;
+				m_GoresReconciliationErrorTotal += CorrectionDistance;
+				m_GoresReconciliationErrorMax = maximum(m_GoresReconciliationErrorMax, CorrectionDistance);
+				if(m_GoresPreSnapshotInteraction)
+				{
+					m_GoresInteractionErrorCount++;
+					m_GoresInteractionErrorTotal += CorrectionDistance;
+				}
+				if(m_GoresPreSnapshotFreezeTransition)
+				{
+					m_GoresFreezeErrorCount++;
+					m_GoresFreezeErrorTotal += CorrectionDistance;
+				}
+				if(g_Config.m_BcGoresInputDebug)
+				{
+					char aBuf[256];
+					str_format(aBuf, sizeof(aBuf), "reconciliation_error=%.2f target_tick=%d target_intra=%.3f interaction=%d interaction_error=%.2f", CorrectionDistance, m_GoresPreSnapshotTargetTick, m_GoresPreSnapshotTargetIntra, m_GoresPreSnapshotInteraction ? 1 : 0, m_GoresPreSnapshotInteraction ? CorrectionDistance : 0.0f);
+					Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+				}
+			}
+			else
+			{
+				m_GoresMetricValidationMissCount++;
+				if(g_Config.m_BcGoresInputDebug)
+					Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", "reconciliation metric validation miss");
+			}
+			m_GoresMeasureSnapshotCorrection = false;
+		}
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(ClientId == m_Snap.m_LocalClientId)
+				continue;
+			auto &State = m_aClients[ClientId].m_GoresPrediction;
+			if(!State.m_ReconciliationPending)
+				continue;
+			const bool ValidRebuiltForecast = State.m_PreSnapshotTargetTick > 0 &&
+				m_aClients[ClientId].m_aGoresPredTick[(State.m_PreSnapshotTargetTick - 1) % 200] == State.m_PreSnapshotTargetTick - 1 &&
+				m_aClients[ClientId].m_aGoresPredTick[State.m_PreSnapshotTargetTick % 200] == State.m_PreSnapshotTargetTick &&
+				m_aClients[ClientId].m_aGoresPredGeneration[(State.m_PreSnapshotTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
+				m_aClients[ClientId].m_aGoresPredGeneration[State.m_PreSnapshotTargetTick % 200] == m_GoresPredictionGeneration;
+			if(ValidRebuiltForecast)
+			{
+				const vec2 RebuiltForecast = mix(
+					m_aClients[ClientId].m_aGoresPredPos[(State.m_PreSnapshotTargetTick - 1) % 200],
+					m_aClients[ClientId].m_aGoresPredPos[State.m_PreSnapshotTargetTick % 200],
+					State.m_PreSnapshotTargetIntra);
+				const float Error = distance(State.m_PreSnapshotForecastPos, RebuiltForecast);
+				State.m_RecentReconciliationError = Error;
+				m_GoresReconciliationSampleCount++;
+				m_GoresReconciliationErrorTotal += Error;
+				m_GoresReconciliationErrorMax = maximum(m_GoresReconciliationErrorMax, Error);
+				if(State.m_PreSnapshotInteraction)
+				{
+					m_GoresInteractionErrorCount++;
+					m_GoresInteractionErrorTotal += Error;
+				}
+				if(State.m_PreSnapshotFreezeTransition)
+				{
+					m_GoresFreezeErrorCount++;
+					m_GoresFreezeErrorTotal += Error;
+				}
+				if(!IsFastInputLocalClient(ClientId) && Error >= 8.0f)
+				{
+					if(Error >= 32.0f)
+						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+					else
+						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_RECOVERY_DEBT_MAX);
+					const float ExistingSafetyHorizon = State.m_AcceptedHorizon;
+					UpdateGoresConfidenceHorizon(State, m_GoresRequestedHorizon);
+					if(State.m_SpeculativeFreezeTransition)
+						State.m_AcceptedHorizon = minimum(State.m_AcceptedHorizon, ExistingSafetyHorizon);
+				}
+			}
+			else
+				m_GoresMetricValidationMissCount++;
+			State.m_ReconciliationPending = false;
+		}
+		m_GoresPredictionCpuTotal += time_get() - GoresPredictionStart;
+		m_GoresPredictionFrames++;
+		if(g_Config.m_BcGoresInputDebug && m_GoresPredictionFrames % 50 == 0)
+		{
+			char aBuf[512];
+			const double AverageUs = m_GoresPredictionCpuTotal * 1000000.0 / (time_freq() * (double)m_GoresPredictionFrames);
+			const double InteractionAnalysisUs = m_GoresInteractionAnalysisCpuTotal * 1000000.0 / (time_freq() * (double)m_GoresPredictionFrames);
+			const double ConfidenceUs = m_GoresConfidenceCpuTotal * 1000000.0 / (time_freq() * (double)m_GoresPredictionFrames);
+			const double MeanError = m_GoresReconciliationSampleCount ? m_GoresReconciliationErrorTotal / m_GoresReconciliationSampleCount : 0.0;
+			const double MeanInteractionError = m_GoresInteractionErrorCount ? m_GoresInteractionErrorTotal / m_GoresInteractionErrorCount : 0.0;
+			const double MeanFreezeError = m_GoresFreezeErrorCount ? m_GoresFreezeErrorTotal / m_GoresFreezeErrorCount : 0.0;
+			str_format(aBuf, sizeof(aBuf), "requested=%.2f accepted=%.2f interaction=%d player=%d remote_input=%s fallbacks=%llu history_failures=%llu metric_misses=%llu cpu_us=%.1f interaction_us=%.1f confidence_us=%.1f errors=%llu mean=%.2f max=%.2f interaction_errors=%llu/%.2f freeze_errors=%llu/%.2f",
+				m_GoresRequestedHorizon, m_GoresAcceptedHorizon, m_GoresInteractionClientId >= 0 ? 1 : 0, m_GoresInteractionClientId,
+				m_GoresInteractionClientId < 0 ? "n/a" : (m_GoresInteractionPreInputBacked ? "preinput" : "assumed"),
+				(unsigned long long)m_GoresFallbackCount, (unsigned long long)m_GoresHistoryFailureCount, (unsigned long long)m_GoresMetricValidationMissCount,
+				AverageUs, InteractionAnalysisUs, ConfidenceUs, (unsigned long long)m_GoresReconciliationSampleCount, MeanError, m_GoresReconciliationErrorMax,
+				(unsigned long long)m_GoresInteractionErrorCount, MeanInteractionError, (unsigned long long)m_GoresFreezeErrorCount, MeanFreezeError);
+			Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aBuf);
+
+			int PrintedPlayers = 0;
+			for(int ClientId = 0; ClientId < MAX_CLIENTS && PrintedPlayers < 8; ClientId++)
+			{
+				if(ClientId == m_Snap.m_LocalClientId || !m_Snap.m_aCharacters[ClientId].m_Active)
+					continue;
+				const auto &State = m_aClients[ClientId].m_GoresPrediction;
+				if(State.m_HorizonReason == GORES_REASON_NONE && !m_aGoresInteractionGroup[ClientId])
+					continue;
+				char aPlayerBuf[512];
+				str_format(aPlayerBuf, sizeof(aPlayerBuf), "player=%d confidence=%.2f input=%.2f history=%.2f motion=%.2f interaction=%.2f debt=%d horizon=%.2f preinput=%.2f exact=%d group=%d future_tick=%d type=%d reasons=%x freeze_transition=%d recent_error=%.2f",
+					ClientId, State.m_Confidence, State.m_InputConfidence, State.m_HistoryConfidence, State.m_MotionConfidence, State.m_InteractionConfidence,
+					State.m_RecoveryDebt, State.m_AcceptedHorizon, State.m_PreInputCoveredHorizon,
+					State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresRequestedHorizon ? 1 : 0, m_aGoresInteractionGroup[ClientId] ? 1 : 0,
+					State.m_FirstFutureInteractionTick, State.m_InteractionType, State.m_HorizonReason, (State.m_RegularFreezeTransition || State.m_SpeculativeFreezeTransition) ? 1 : 0, State.m_RecentReconciliationError);
+				Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "gores_input", aPlayerBuf);
+				PrintedPlayers++;
+			}
+		}
+	}
 }
 
 void CGameClient::OnActivateEditor()
@@ -3923,6 +4754,14 @@ void CGameClient::CClientData::Reset()
 	std::fill(std::begin(m_aSmoothLen), std::end(m_aSmoothLen), 0);
 	std::fill(std::begin(m_aPredPos), std::end(m_aPredPos), vec2(0.0f, 0.0f));
 	std::fill(std::begin(m_aPredTick), std::end(m_aPredTick), 0);
+	std::fill(std::begin(m_aGoresPredPos), std::end(m_aGoresPredPos), vec2(0.0f, 0.0f));
+	std::fill(std::begin(m_aGoresPredTick), std::end(m_aGoresPredTick), 0);
+	std::fill(std::begin(m_aGoresPredGeneration), std::end(m_aGoresPredGeneration), 0);
+	m_GoresRenderPrev.Reset();
+	m_GoresRenderCur.Reset();
+	m_GoresRenderGeneration = 0;
+	m_GoresRenderValid = false;
+	m_GoresPrediction = {};
 	m_SpecCharPresent = false;
 	m_SpecChar = vec2(0.0f, 0.0f);
 
@@ -4704,10 +5543,22 @@ void CGameClient::UpdateRenderedCharacters()
 			continue;
 		}
 
-		if(Predict() && (i == m_Snap.m_LocalClientId || (AntiPingPlayers() && !IsOtherTeam(i))) && pChar)
+		const bool GoresInteractionMember = IsGoresInputMode() && m_aGoresInteractionGroup[i];
+		if(Predict() && (i == m_Snap.m_LocalClientId || ((AntiPingPlayers() || (IsGoresInputMode() && (g_Config.m_BcGoresInputOthers || GoresInteractionMember))) && !IsOtherTeam(i))) && pChar)
 		{
-			m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
-			m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
+			const bool UseGoresLocalRenderCore = IsGoresInputMode() && i == m_Snap.m_LocalClientId &&
+				m_aClients[i].m_GoresRenderValid && m_aClients[i].m_GoresRenderGeneration == m_GoresPredictionGeneration &&
+				absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f;
+			if(UseGoresLocalRenderCore)
+			{
+				m_aClients[i].m_GoresRenderCur.Write(&m_aClients[i].m_RenderCur);
+				m_aClients[i].m_GoresRenderPrev.Write(&m_aClients[i].m_RenderPrev);
+			}
+			else
+			{
+				m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
+				m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
+			}
 
 			m_aClients[i].m_IsPredicted = true;
 
@@ -4716,7 +5567,9 @@ void CGameClient::UpdateRenderedCharacters()
 				vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
 				m_aClients[i].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy));
 
-			if(g_Config.m_TcRemoveAnti)
+			if(IsGoresInputMode())
+				Pos = GetGoresInputPos(i);
+			else if(g_Config.m_TcRemoveAnti)
 				Pos = GetFreezePos(i);
 			else if(HasFastInput && (i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy])))
 				Pos = GetFastInputPos(i);
@@ -4740,28 +5593,34 @@ void CGameClient::UpdateRenderedCharacters()
 				m_aClients[i].m_RenderPrev.m_Angle = m_Snap.m_aCharacters[i].m_Prev.m_Angle;
 				m_aClients[i].m_RenderCur.m_Angle = m_Snap.m_aCharacters[i].m_Cur.m_Angle;
 
+				if(IsGoresInputMode())
+				{
+					// Gores samples exact physics history. Interaction group members must not be
+					// moved independently by either legacy or improved anti-ping smoothing.
+					Pos = GetGoresInputPos(i);
+				}
 				// Cloud skips ClAntiPingSmooth (same reason as aBeforeRender): on old kernels it
 				// locks others to snap rate. Use raw prediction / fast-input paths instead.
-				if(g_Config.m_ClAntiPingSmooth && !CloudInputMode)
+				else if(g_Config.m_ClAntiPingSmooth && !CloudInputMode)
 					Pos = GetSmoothPos(i);
 
 				// Fast-input others should feel immediate: prefer direct fast-input position over smoothing layers.
-				if(HasFastInputOthers && BcInputs::ImmediateOthers())
+				if(!IsGoresInputMode() && HasFastInputOthers && BcInputs::ImmediateOthers())
 					Pos = GetFastInputPos(i);
-				else if(g_Config.m_TcAntiPingImproved && ((CloudInputMode && FastInputOthers) || (!CloudInputMode && m_aClients[i].m_ValidAntipingSmooth)))
+				else if(!IsGoresInputMode() && g_Config.m_TcAntiPingImproved && ((CloudInputMode && FastInputOthers) || (!CloudInputMode && m_aClients[i].m_ValidAntipingSmooth)))
 					Pos = mix(m_aClients[i].m_PrevImprovedPredPos, m_aClients[i].m_ImprovedPredPos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
 
-				if(g_Config.m_TcRemoveAnti && m_pClient->m_IsLocalFrozen)
+				if(!IsGoresInputMode() && g_Config.m_TcRemoveAnti && m_pClient->m_IsLocalFrozen)
 					Pos = GetFreezePos(i);
-				else if(CloudInputMode && FastInputOthers && !g_Config.m_TcAntiPingImproved)
+				else if(!IsGoresInputMode() && CloudInputMode && FastInputOthers && !g_Config.m_TcAntiPingImproved)
 					Pos = GetFastInputPos(i);
-				else if(HasFastInputOthers && FastInputOthers && !g_Config.m_TcAntiPingImproved)
+				else if(!IsGoresInputMode() && HasFastInputOthers && FastInputOthers && !g_Config.m_TcAntiPingImproved)
 					Pos = GetFastInputPos(i);
 
-				if(g_Config.m_TcShowOthersGhosts && g_Config.m_TcSwapGhosts && !(m_aClients[i].m_FreezeEnd > 0 && g_Config.m_TcHideFrozenGhosts))
+				if(!GoresInteractionMember && g_Config.m_TcShowOthersGhosts && g_Config.m_TcSwapGhosts && !(m_aClients[i].m_FreezeEnd > 0 && g_Config.m_TcHideFrozenGhosts))
 					Pos = UnpredPos;
 
-				if(g_Config.m_TcUnpredOthersInFreeze && Client()->m_IsLocalFrozen)
+				if(!GoresInteractionMember && g_Config.m_TcUnpredOthersInFreeze && Client()->m_IsLocalFrozen)
 					Pos = UnpredPos;
 			}
 		}
@@ -4974,6 +5833,9 @@ vec2 CGameClient::GetSmoothPos(int ClientId)
 }
 vec2 CGameClient::GetFastInputPos(int ClientId)
 {
+	if(IsGoresInputMode())
+		return GetGoresInputPos(ClientId);
+
 	// Cloud: sample PredPos at PredTick+Amount directly (same idea as Saiko/Best ApplyOffset).
 	// Never go through GetSmoothPos here — that is only for ClAntiPingSmooth corrections.
 	if(IsCloudInputMode())
@@ -5099,6 +5961,44 @@ vec2 CGameClient::GetFastInputPos(int ClientId)
 	}
 
 	return Pos;
+}
+
+vec2 CGameClient::GetGoresInputPos(int ClientId)
+{
+	float Offset = m_GoresRequestedHorizon;
+	if(ClientId == m_Snap.m_LocalClientId)
+		Offset = m_GoresAcceptedHorizon;
+	else if(m_GoresInteractionClientId >= 0 && m_aGoresInteractionGroup[ClientId])
+		Offset = m_GoresAcceptedHorizon;
+	else if(IsFastInputLocalClient(ClientId))
+		Offset = m_aClients[ClientId].m_GoresPrediction.m_AcceptedHorizon;
+	else if(!IsFastInputLocalClient(ClientId))
+		Offset = g_Config.m_BcGoresInputOthers ? minimum(Offset, m_aClients[ClientId].m_GoresPrediction.m_AcceptedHorizon) : 0.0f;
+
+	int Tick = Client()->PredGameTick(g_Config.m_ClDummy);
+	float Intra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	BcInputs::ApplyOffset(Offset, Tick, Intra);
+
+	if(Tick > 0 &&
+		m_aClients[ClientId].m_aGoresPredTick[(Tick - 1) % 200] == Tick - 1 &&
+		m_aClients[ClientId].m_aGoresPredTick[Tick % 200] == Tick &&
+		m_aClients[ClientId].m_aGoresPredGeneration[(Tick - 1) % 200] == m_GoresPredictionGeneration &&
+		m_aClients[ClientId].m_aGoresPredGeneration[Tick % 200] == m_GoresPredictionGeneration)
+	{
+		return mix(m_aClients[ClientId].m_aGoresPredPos[(Tick - 1) % 200], m_aClients[ClientId].m_aGoresPredPos[Tick % 200], Intra);
+	}
+
+	m_GoresFallbackCount++;
+	m_GoresHistoryFailureCount++;
+	const int RegularTick = Client()->PredGameTick(g_Config.m_ClDummy);
+	const float RegularIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	if(RegularTick > 0 &&
+		m_aClients[ClientId].m_aPredTick[(RegularTick - 1) % 200] == RegularTick - 1 &&
+		m_aClients[ClientId].m_aPredTick[RegularTick % 200] == RegularTick)
+	{
+		return mix(m_aClients[ClientId].m_aPredPos[(RegularTick - 1) % 200], m_aClients[ClientId].m_aPredPos[RegularTick % 200], RegularIntra);
+	}
+	return m_aClients[ClientId].m_RegularPredicted.m_Pos;
 }
 vec2 CGameClient::GetFreezePos(int ClientId)
 {
@@ -6719,8 +7619,8 @@ bool CGameClient::IsSnapTapBlockedByCommunity() const
 {
 	auto IsBlockedGameType = [](const char *pGameType) -> bool {
 		return pGameType != nullptr && pGameType[0] != '\0' &&
-			(str_find_nocase(pGameType, "ddracenet") != nullptr ||
-				str_find_nocase(pGameType, "0xf") != nullptr);
+		       (str_find_nocase(pGameType, "ddracenet") != nullptr ||
+			       str_find_nocase(pGameType, "0xf") != nullptr);
 	};
 
 	const char *pCommunityId = nullptr;

@@ -623,6 +623,47 @@ public:
 		int64_t m_aSmoothLen[2];
 		vec2 m_aPredPos[200];
 		int m_aPredTick[200];
+		vec2 m_aGoresPredPos[200];
+		int m_aGoresPredTick[200];
+		int m_aGoresPredGeneration[200];
+		CCharacterCore m_GoresRenderPrev;
+		CCharacterCore m_GoresRenderCur;
+		int m_GoresRenderGeneration = 0;
+		bool m_GoresRenderValid = false;
+		struct SGoresPredictionState
+		{
+			float m_InputConfidence = 0.0f;
+			float m_HistoryConfidence = 0.0f;
+			float m_MotionConfidence = 0.0f;
+			float m_InteractionConfidence = 1.0f;
+			float m_Confidence = 0.0f;
+			float m_AcceptedHorizon = 0.0f;
+			float m_PreInputCoveredHorizon = 0.0f;
+			int m_RecoveryDebt = 0;
+			int m_StableInputTicks = 0;
+			int m_LastEvaluationTick = -1;
+			int m_LastDirection = 0;
+			int m_LastHook = 0;
+			bool m_LastFrozen = false;
+			vec2 m_LastVelocity = vec2(0.0f, 0.0f);
+			int m_InteractionUntilTick = -1;
+			int m_FirstFutureInteractionTick = -1;
+			int m_InteractionType = 0;
+			int m_HorizonReason = 0;
+			bool m_RegularFreezeTransition = false;
+			bool m_SpeculativeFreezeTransition = false;
+			int m_ExpectedFreezeTick = -1;
+			int m_ExpectedFreezeGeneration = 0;
+			bool m_ExpectedFrozen = false;
+			vec2 m_PreSnapshotForecastPos = vec2(0.0f, 0.0f);
+			int m_PreSnapshotTargetTick = 0;
+			float m_PreSnapshotTargetIntra = 0.0f;
+			float m_RecentReconciliationError = 0.0f;
+			bool m_PreSnapshotInteraction = false;
+			bool m_PreSnapshotFreezeTransition = false;
+			bool m_ReconciliationPending = false;
+			bool m_Initialized = false;
+		} m_GoresPrediction;
 		bool m_SpecCharPresent;
 		vec2 m_SpecChar;
 
@@ -650,6 +691,36 @@ public:
 	};
 
 	CClientData m_aClients[MAX_CLIENTS];
+
+	bool m_aGoresInteractionGroup[MAX_CLIENTS] = {};
+	int m_GoresInteractionClientId = -1;
+	float m_GoresRequestedHorizon = 0.0f;
+	float m_GoresAcceptedHorizon = 0.0f;
+	float m_GoresLastLoggedAcceptedHorizon = -1.0f;
+	bool m_GoresInteractionPreInputBacked = false;
+	uint64_t m_GoresFallbackCount = 0;
+	uint64_t m_GoresHistoryFailureCount = 0;
+	uint64_t m_GoresMetricValidationMissCount = 0;
+	uint64_t m_GoresReconciliationSampleCount = 0;
+	double m_GoresReconciliationErrorTotal = 0.0;
+	float m_GoresReconciliationErrorMax = 0.0f;
+	uint64_t m_GoresInteractionErrorCount = 0;
+	double m_GoresInteractionErrorTotal = 0.0;
+	uint64_t m_GoresFreezeErrorCount = 0;
+	double m_GoresFreezeErrorTotal = 0.0;
+	int m_GoresPredictionGeneration = 0;
+	int64_t m_GoresPredictionCpuTotal = 0;
+	int64_t m_GoresInteractionAnalysisCpuTotal = 0;
+	int64_t m_GoresConfidenceCpuTotal = 0;
+	uint64_t m_GoresPredictionFrames = 0;
+	vec2 m_GoresPreSnapshotForecastPos = vec2(0.0f, 0.0f);
+	int m_GoresPreSnapshotTargetTick = 0;
+	float m_GoresPreSnapshotTargetIntra = 0.0f;
+	bool m_GoresPreSnapshotInteraction = false;
+	bool m_GoresPreSnapshotFreezeTransition = false;
+	bool m_GoresMeasureSnapshotCorrection = false;
+	bool m_GoresLocalFreezeTransition = false;
+	bool m_GoresWasActive = false;
 
 	class CClientStats
 	{
@@ -779,6 +850,8 @@ public:
 	void ApplyPreInputs(int Tick, bool Direct, CGameWorld &GameWorld);
 	bool GetDummyFastInput(CNetObj_PlayerInput &DummyFastInput, const CNetObj_PlayerInput *pDummyInputData, const class CCharacter *pDummyChar, int LocalTee, int DummyTee) const;
 	bool IsCloudInputMode() const;
+	bool IsGoresInputMode() const;
+	bool HasExactPreInput(int ClientId, int Tick) const;
 	bool IsFastInputLocalClient(int ClientId) const;
 
 	int m_aNextChangeInfo[NUM_DUMMIES];
@@ -1029,6 +1102,7 @@ public:
 	vec2 GetSmoothPos(int ClientId);
 	vec2 GetFreezePos(int ClientId);
 	vec2 GetFastInputPos(int ClientId);
+	vec2 GetGoresInputPos(int ClientId);
 	vec2 BcGetCursorWorldPos() const;
 
 	int m_MultiViewTeam;

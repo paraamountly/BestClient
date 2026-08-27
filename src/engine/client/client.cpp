@@ -2963,11 +2963,12 @@ void CClient::Update()
 					(g_Config.m_BcInputs == BC_INPUTS_SAIKO && g_Config.m_BcSaikoInputAmount > 0) ||
 					(g_Config.m_BcInputs == BC_INPUTS_DELTA && g_Config.m_BcDeltaInputAmount > 0) ||
 					(g_Config.m_BcInputs == BC_INPUTS_F && g_Config.m_BcFInputAmount > 0) ||
-					(g_Config.m_BcInputs == BC_INPUTS_CLOUD && g_Config.m_BcCloudInputAmount > 0);
+					(g_Config.m_BcInputs == BC_INPUTS_CLOUD && g_Config.m_BcCloudInputAmount > 0) ||
+					(g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputAmount > 0);
 				// Saiko/Cloud: always repredict so mid-tick aim/hooks stay live.
 				// Safe for cloud again: ClAntiPingSmooth is skipped while cloud is active, so the
 				// old every-frame repredict + smooth feedback loop (snap-rate visuals) cannot return.
-				if(HasFastInput && (g_Config.m_BcInputs == BC_INPUTS_SAIKO || g_Config.m_BcInputs == BC_INPUTS_CLOUD))
+				if(HasFastInput && (g_Config.m_BcInputs == BC_INPUTS_SAIKO || g_Config.m_BcInputs == BC_INPUTS_CLOUD || g_Config.m_BcInputs == BC_INPUTS_GORES))
 				{
 					GameClient()->CheckNewInput();
 					Repredict = true;

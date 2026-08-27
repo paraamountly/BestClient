@@ -4,7 +4,7 @@
 
 #include <base/vmath.h>
 
-// bc_inputs prediction modes (fast / best / saiko / delta / f), see engine/shared/config.h for the BC_INPUTS_* values.
+// bc_inputs prediction modes, see engine/shared/config.h for the BC_INPUTS_* values.
 namespace BcInputs
 {
 	// Fractional prediction ticks the currently active mode wants to look ahead of the regular prediction tick.
@@ -25,6 +25,7 @@ namespace BcInputs
 	bool DeltaOthers();
 	bool FOthers();
 	bool CloudOthers();
+	bool GoresOthers();
 	bool AnyOthers();
 	bool ImmediateOthers();
 } // namespace BcInputs

@@ -1949,9 +1949,11 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	const int InputsMode = g_Config.m_BcInputs;
 	const bool InputsEnabled = InputsMode != BC_INPUTS_OFF;
 	const bool InputsBestMode = InputsMode == BC_INPUTS_BEST;
+	const bool InputsGoresMode = InputsMode == BC_INPUTS_GORES;
 	static float s_InputsRevealPhase = 0.0f;
 	UpdateModuleRevealPhase(s_InputsRevealPhase, InputsEnabled, Client()->RenderFrameTime());
-	const float InputsModeFieldsHeight = (InputsBestMode ? 6.0f : 2.0f) * (MarginSmall + LineSize);
+	const float InputsModeFieldRows = InputsBestMode ? 6.0f : (InputsGoresMode ? 4.0f : 2.0f);
+	const float InputsModeFieldsHeight = InputsModeFieldRows * (MarginSmall + LineSize);
 	const float InputsExpandedTargetHeight = (MarginSmall + LineSize) + InputsModeFieldsHeight;
 	const float InputsExpandedHeight = InputsExpandedTargetHeight * BCUiAnimations::EaseOutCubic(s_InputsRevealPhase);
 	const float InputsHeaderHeight = LineSize + MarginSmall + LineSize;
@@ -1990,12 +1992,12 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 		InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
 		InputsBlock.HSplitTop(LineSize, &Button, &InputsBlock);
 		{
-			static CButtonContainer s_InputsFast, s_InputsBest, s_InputsSaiko, s_InputsDelta, s_InputsF, s_InputsCloud;
+			static CButtonContainer s_InputsFast, s_InputsBest, s_InputsSaiko, s_InputsDelta, s_InputsF, s_InputsCloud, s_InputsGores;
 			CUIRect ButtonsRect = Button;
 			const float Spacing = 2.0f;
-			const float InputButtonWidth = (ButtonsRect.w - Spacing * 5.0f) / 6.0f;
+			const float InputButtonWidth = (ButtonsRect.w - Spacing * 6.0f) / 7.0f;
 
-			CUIRect FastButton, BestButton, SaikoButton, DeltaButton, FButton, CloudButton;
+			CUIRect FastButton, BestButton, SaikoButton, DeltaButton, FButton, CloudButton, GoresButton;
 			ButtonsRect.VSplitLeft(InputButtonWidth, &FastButton, &ButtonsRect);
 			ButtonsRect.VSplitLeft(Spacing, nullptr, &ButtonsRect);
 			ButtonsRect.VSplitLeft(InputButtonWidth, &BestButton, &ButtonsRect);
@@ -2006,7 +2008,9 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			ButtonsRect.VSplitLeft(Spacing, nullptr, &ButtonsRect);
 			ButtonsRect.VSplitLeft(InputButtonWidth, &FButton, &ButtonsRect);
 			ButtonsRect.VSplitLeft(Spacing, nullptr, &ButtonsRect);
-			CloudButton = ButtonsRect;
+			ButtonsRect.VSplitLeft(InputButtonWidth, &CloudButton, &ButtonsRect);
+			ButtonsRect.VSplitLeft(Spacing, nullptr, &ButtonsRect);
+			GoresButton = ButtonsRect;
 
 			FastButton.HMargin(2.0f, &FastButton);
 			BestButton.HMargin(2.0f, &BestButton);
@@ -2014,6 +2018,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			DeltaButton.HMargin(2.0f, &DeltaButton);
 			FButton.HMargin(2.0f, &FButton);
 			CloudButton.HMargin(2.0f, &CloudButton);
+			GoresButton.HMargin(2.0f, &GoresButton);
 
 			if(DoButton_Menu(&s_InputsFast, "Fast", InputsMode == BC_INPUTS_FAST, &FastButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_L))
 				g_Config.m_BcInputs = BC_INPUTS_FAST;
@@ -2025,8 +2030,10 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 				g_Config.m_BcInputs = BC_INPUTS_DELTA;
 			if(DoButton_Menu(&s_InputsF, "F", InputsMode == BC_INPUTS_F, &FButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
 				g_Config.m_BcInputs = BC_INPUTS_F;
-			if(DoButton_Menu(&s_InputsCloud, "Cloud", InputsMode == BC_INPUTS_CLOUD, &CloudButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+			if(DoButton_Menu(&s_InputsCloud, "Cloud", InputsMode == BC_INPUTS_CLOUD, &CloudButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_NONE))
 				g_Config.m_BcInputs = BC_INPUTS_CLOUD;
+			if(DoButton_Menu(&s_InputsGores, "Gores", InputsMode == BC_INPUTS_GORES, &GoresButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_R))
+				g_Config.m_BcInputs = BC_INPUTS_GORES;
 		}
 
 		if(InputsMode == BC_INPUTS_FAST)
@@ -2133,6 +2140,24 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
 			InputsBlock.HSplitTop(LineSize, &Content, &InputsBlock);
 			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcCloudInputOthers, Localize("Cloud input others"), &g_Config.m_BcCloudInputOthers, &Content, LineSize);
+		}
+		else if(InputsMode == BC_INPUTS_GORES)
+		{
+			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
+			InputsBlock.HSplitTop(LineSize, &Button, &InputsBlock);
+			DoTickAmountSlider(&g_Config.m_BcGoresInputAmount, &Button, Localize("Prediction offset"), 0, 200);
+
+			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
+			InputsBlock.HSplitTop(LineSize, &Button, &InputsBlock);
+			DoTickAmountSlider(&g_Config.m_BcGoresInputInteractionAmount, &Button, Localize("Interaction offset"), 0, 200);
+
+			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
+			InputsBlock.HSplitTop(LineSize, &Content, &InputsBlock);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcGoresInputOthers, Localize("Gores input others"), &g_Config.m_BcGoresInputOthers, &Content, LineSize);
+
+			InputsBlock.HSplitTop(MarginSmall, nullptr, &InputsBlock);
+			InputsBlock.HSplitTop(LineSize, &Content, &InputsBlock);
+			DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcGoresInputDebug, Localize("Console metrics"), &g_Config.m_BcGoresInputDebug, &Content, LineSize);
 		}
 
 		Ui()->ClipDisable();

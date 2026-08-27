@@ -635,7 +635,8 @@ float CControls::GetMaxMouseDistance() const
 
 bool CControls::CheckNewInput()
 {
-	if(g_Config.m_BcInputs == BC_INPUTS_SAIKO && g_Config.m_BcSaikoInputAmount > 0)
+	if((g_Config.m_BcInputs == BC_INPUTS_SAIKO && g_Config.m_BcSaikoInputAmount > 0) ||
+		(g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputAmount > 0))
 	{
 		CNetObj_PlayerInput TestInput = m_aInputData[g_Config.m_ClDummy];
 		const bool LeftPressed = m_aInputDirectionLeft[g_Config.m_ClDummy] != 0;
