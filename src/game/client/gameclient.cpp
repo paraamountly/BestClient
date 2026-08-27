@@ -3384,6 +3384,8 @@ void CGameClient::OnPredict()
 	int LocalTee = g_Config.m_ClDummy ^ m_IsDummySwapping;
 	int DummyTee = LocalTee ^ 1;
 	bool aGoresRegularFrozen[MAX_CLIENTS] = {};
+	int GoresPredictedLocalFreezeTick = -1;
+	float GoresPredictedLocalFreezeSafeHorizon = 0.0f;
 
 	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTickSelf; Tick++)
 	{
@@ -3518,12 +3520,23 @@ void CGameClient::OnPredict()
 					State.m_RegularFreezeTransition = State.m_Initialized && NewEvaluationTick && Frozen != State.m_LastFrozen;
 					if(State.m_RegularFreezeTransition)
 					{
-						State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
-						State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
-						if(ClientId == m_Snap.m_LocalClientId || m_aGoresInteractionGroup[ClientId])
+						const int PreviousGeneration = m_GoresPredictionGeneration == 1 ? std::numeric_limits<int>::max() : m_GoresPredictionGeneration - 1;
+						const bool ExpectedLocalFreeze = ClientId == m_Snap.m_LocalClientId && Frozen &&
+							State.m_ExpectedFreezeTick == FinalTickRegular && State.m_ExpectedFreezeGeneration == PreviousGeneration;
+						if(ExpectedLocalFreeze)
 						{
-							m_GoresLocalFreezeTransition = true;
-							m_GoresAcceptedHorizon = 0.0f;
+							State.m_ExpectedFreezeTick = -1;
+							State.m_ExpectedFreezeGeneration = 0;
+						}
+						else
+						{
+							State.m_RecoveryDebt = maximum(State.m_RecoveryDebt, GORES_FREEZE_RECOVERY_DEBT);
+							State.m_HorizonReason |= GORES_REASON_FREEZE_TRANSITION;
+							if(ClientId == m_Snap.m_LocalClientId || m_aGoresInteractionGroup[ClientId])
+							{
+								m_GoresLocalFreezeTransition = true;
+								m_GoresAcceptedHorizon = 0.0f;
+							}
 						}
 					}
 					else if(State.m_Initialized && NewEvaluationTick && State.m_RecoveryDebt > 0)
@@ -3720,7 +3733,16 @@ void CGameClient::OnPredict()
 			if(LocalFreezeTransition && BeforeRequestedTarget)
 			{
 				m_GoresLocalFreezeTransition = true;
-				m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, SafeHorizon);
+				if(GoresCharacterFrozen(*pLocalChar))
+				{
+					if(GoresPredictedLocalFreezeTick < 0)
+					{
+						GoresPredictedLocalFreezeTick = Tick;
+						GoresPredictedLocalFreezeSafeHorizon = SafeHorizon;
+					}
+				}
+				else
+					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, SafeHorizon);
 			}
 
 			const CCharacterCore &LocalCore = pLocalChar->GetCore();
@@ -4218,6 +4240,40 @@ void CGameClient::OnPredict()
 					str_format(aBuf, sizeof(aBuf), "	%d %d %d (%d %d)", i, ((int *)&Before)[i], ((int *)&Now)[i], ((int *)&BeforePrev)[i], ((int *)&NowPrev)[i]);
 					Console()->Print(IConsole::OUTPUT_LEVEL_DEBUG, "client", aBuf);
 				}
+		}
+	}
+
+	if(GoresInputMode && GoresPredictedLocalFreezeTick >= 0)
+	{
+		auto &LocalState = m_aClients[m_Snap.m_LocalClientId].m_GoresPrediction;
+		int LocalTargetTick = Client()->PredGameTick(g_Config.m_ClDummy);
+		float LocalTargetIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+		BcInputs::ApplyOffset(m_GoresRequestedHorizon, LocalTargetTick, LocalTargetIntra);
+		const bool ValidLocalFreezeTrajectory = LocalTargetTick > 0 &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredTick[(LocalTargetTick - 1) % 200] == LocalTargetTick - 1 &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredTick[LocalTargetTick % 200] == LocalTargetTick &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredGeneration[(LocalTargetTick - 1) % 200] == m_GoresPredictionGeneration &&
+			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredGeneration[LocalTargetTick % 200] == m_GoresPredictionGeneration;
+		if(ValidLocalFreezeTrajectory)
+		{
+			LocalState.m_ExpectedFreezeTick = GoresPredictedLocalFreezeTick;
+			LocalState.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
+		}
+		else
+		{
+			LocalState.m_ExpectedFreezeTick = -1;
+			LocalState.m_ExpectedFreezeGeneration = 0;
+			m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, GoresPredictedLocalFreezeSafeHorizon);
+			m_GoresHistoryFailureCount++;
+		}
+	}
+	else if(GoresInputMode)
+	{
+		auto &LocalState = m_aClients[m_Snap.m_LocalClientId].m_GoresPrediction;
+		if(LocalState.m_ExpectedFreezeTick > FinalTickRegular)
+		{
+			LocalState.m_ExpectedFreezeTick = -1;
+			LocalState.m_ExpectedFreezeGeneration = 0;
 		}
 	}
 
