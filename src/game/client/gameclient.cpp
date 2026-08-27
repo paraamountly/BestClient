@@ -3697,9 +3697,12 @@ void CGameClient::OnPredict()
 						if(!m_aGoresInteractionGroup[ClientId] || ClientId == m_Snap.m_LocalClientId)
 							continue;
 						const auto &State = m_aClients[ClientId].m_GoresPrediction;
-						m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, State.m_AcceptedHorizon);
 						if(!IsFastInputLocalClient(ClientId))
+						{
+							if(State.m_HistoryConfidence <= 0.0f)
+								m_GoresAcceptedHorizon = 0.0f;
 							AllPreInputBacked &= State.m_PreInputCoveredHorizon + 0.0001f >= m_GoresAcceptedHorizon;
+						}
 					}
 					m_GoresInteractionPreInputBacked = AllPreInputBacked;
 				}
@@ -3745,9 +3748,9 @@ void CGameClient::OnPredict()
 					const bool FirstInteractionMember = m_GoresInteractionClientId < 0;
 					if(m_GoresInteractionClientId < 0)
 						m_GoresInteractionClientId = ClientId;
-					const float RemoteHorizon = State.m_AcceptedHorizon;
-					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, g_Config.m_BcGoresInputInteractionAmount / 100.0f, RemoteHorizon);
-					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, SafeHorizon);
+					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, g_Config.m_BcGoresInputInteractionAmount / 100.0f);
+					if(!IsFastInputLocalClient(ClientId) && State.m_HistoryConfidence <= 0.0f)
+						m_GoresAcceptedHorizon = 0.0f;
 					if(FirstInteractionMember)
 						m_GoresInteractionPreInputBacked = true;
 					if(!IsFastInputLocalClient(ClientId))
@@ -4218,6 +4221,29 @@ void CGameClient::OnPredict()
 		}
 	}
 
+	if(GoresInputMode && m_GoresInteractionClientId >= 0 && m_GoresAcceptedHorizon > 0.0f)
+	{
+		int SharedTick = Client()->PredGameTick(g_Config.m_ClDummy);
+		float SharedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+		BcInputs::ApplyOffset(m_GoresAcceptedHorizon, SharedTick, SharedIntra);
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(!m_aGoresInteractionGroup[ClientId])
+				continue;
+			const bool ValidSharedHistory = SharedTick > 0 &&
+				m_aClients[ClientId].m_aGoresPredTick[(SharedTick - 1) % 200] == SharedTick - 1 &&
+				m_aClients[ClientId].m_aGoresPredTick[SharedTick % 200] == SharedTick &&
+				m_aClients[ClientId].m_aGoresPredGeneration[(SharedTick - 1) % 200] == m_GoresPredictionGeneration &&
+				m_aClients[ClientId].m_aGoresPredGeneration[SharedTick % 200] == m_GoresPredictionGeneration;
+			if(!ValidSharedHistory)
+			{
+				m_GoresAcceptedHorizon = 0.0f;
+				m_GoresHistoryFailureCount++;
+				break;
+			}
+		}
+	}
+
 	m_PredictedTick = FinalTickRegular;
 
 	if(m_NewPredictedTick)
@@ -4313,8 +4339,6 @@ void CGameClient::OnPredict()
 					UpdateGoresConfidenceHorizon(State, m_GoresRequestedHorizon);
 					if(State.m_SpeculativeFreezeTransition)
 						State.m_AcceptedHorizon = minimum(State.m_AcceptedHorizon, ExistingSafetyHorizon);
-					if(m_aGoresInteractionGroup[ClientId])
-						m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, State.m_AcceptedHorizon);
 				}
 			}
 			else
