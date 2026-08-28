@@ -973,6 +973,9 @@ private:
 	std::vector<VkImageView> m_vSwapChainImageViewList;
 	std::vector<SSwapChainMultiSampleImage> m_vSwapChainMultiSamplingImages;
 	std::vector<SFrameBlendImage> m_vFrameBlendImages;
+	// One device-local, single-sample capture per swapchain image. The image is deliberately
+	// small: linear filtering while magnifying it is the backdrop blur pass.
+	std::vector<SFrameBlendImage> m_vBackdropImages;
 	std::vector<VkFramebuffer> m_vFramebufferList;
 	std::vector<VkCommandBuffer> m_vMainDrawCommandBuffers;
 
@@ -1041,6 +1044,8 @@ private:
 	std::vector<VkCommandPool> m_vCommandPools;
 
 	VkRenderPass m_VKRenderPass;
+	VkRenderPass m_VKContinuationRenderPass = VK_NULL_HANDLE;
+	uint32_t m_RenderSegment = 0;
 
 	VkSurfaceFormatKHR m_VKSurfFormat;
 
@@ -1258,9 +1263,9 @@ protected:
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_CLEAR)] = {true, [this](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) { Cmd_Clear_FillExecuteBuffer(ExecBuffer, static_cast<const CCommandBuffer::SCommand_Clear *>(pBaseCommand)); }, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_Clear(ExecBuffer, static_cast<const CCommandBuffer::SCommand_Clear *>(pBaseCommand)); }};
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER)] = {true, [this](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) { Cmd_Render_FillExecuteBuffer(ExecBuffer, static_cast<const CCommandBuffer::SCommand_Render *>(pBaseCommand)); }, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_Render(static_cast<const CCommandBuffer::SCommand_Render *>(pBaseCommand), ExecBuffer); }};
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER_TEX3D)] = {true, [this](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) { Cmd_RenderTex3D_FillExecuteBuffer(ExecBuffer, static_cast<const CCommandBuffer::SCommand_RenderTex3D *>(pBaseCommand)); }, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_RenderTex3D(static_cast<const CCommandBuffer::SCommand_RenderTex3D *>(pBaseCommand), ExecBuffer); }};
-		// Backdrop blur is currently implemented by the modern desktop OpenGL backend.
-		// Explicitly consume the command so Vulkan never invokes an empty callback.
-		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER_BACKDROP_BLUR)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return true; }};
+		// A non-render callback is intentional: the marker itself flushes the current
+		// graphics epoch before recording capture and continuation commands.
+		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RENDER_BACKDROP_BLUR)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_RenderBackdropBlur(static_cast<const CCommandBuffer::SCommand_RenderBackdropBlur *>(pBaseCommand)); }};
 
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_CREATE_BUFFER_OBJECT)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_CreateBufferObject(static_cast<const CCommandBuffer::SCommand_CreateBufferObject *>(pBaseCommand)); }};
 		m_aCommandCallbacks[CommandBufferCMDOff(CCommandBuffer::CMD_RECREATE_BUFFER_OBJECT)] = {false, [](SRenderCommandExecuteBuffer &ExecBuffer, const CCommandBuffer::SCommand *pBaseCommand) {}, [this](const CCommandBuffer::SCommand *pBaseCommand, SRenderCommandExecuteBuffer &ExecBuffer) { return Cmd_RecreateBufferObject(static_cast<const CCommandBuffer::SCommand_RecreateBufferObject *>(pBaseCommand)); }};
@@ -2215,6 +2220,34 @@ protected:
 		ShrinkUnusedCaches();
 	}
 
+	// Close and execute every secondary command buffer belonging to the current
+	// render segment. This is the authoritative ordering primitive for special
+	// commands which must observe all preceding graphics work.
+	void ExecuteCurrentRenderSegment(VkCommandBuffer CommandBuffer)
+	{
+		FinishRenderThreads();
+		UploadNonFlushedBuffers<true>();
+		if(m_ThreadCount < 2)
+			return;
+		const size_t SegmentIndex = m_CurImageIndex + (m_RenderSegment * m_SwapChainImageCount);
+		size_t Count = 0;
+		for(size_t ThreadIndex = 0; ThreadIndex < m_ThreadCount; ++ThreadIndex)
+		{
+			if(!m_vvUsedThreadDrawCommandBuffer[ThreadIndex][SegmentIndex])
+				continue;
+			auto &Secondary = m_vvThreadDrawCommandBuffers[ThreadIndex][SegmentIndex];
+			if(ThreadIndex == MAIN_THREAD_INDEX)
+				vkEndCommandBuffer(Secondary);
+			m_vHelperThreadDrawCommandBuffers[Count++] = Secondary;
+			m_vvUsedThreadDrawCommandBuffer[ThreadIndex][SegmentIndex] = false;
+		}
+		if(Count != 0)
+			vkCmdExecuteCommands(CommandBuffer, Count, m_vHelperThreadDrawCommandBuffers.data());
+		for(auto &Pipeline : m_vLastPipeline)
+			Pipeline = VK_NULL_HANDLE;
+		m_LastCommandsInPipeThreadIndex = 0;
+	}
+
 	[[nodiscard]] bool WaitFrame()
 	{
 		FinishRenderThreads();
@@ -2231,12 +2264,13 @@ protected:
 			size_t RenderThreadCount = m_ThreadCount - 1;
 			for(size_t i = 0; i < RenderThreadCount; ++i)
 			{
-				if(m_vvUsedThreadDrawCommandBuffer[i + 1][m_CurImageIndex])
+				const size_t CommandBufferIndex = m_CurImageIndex + (m_RenderSegment * m_SwapChainImageCount);
+				if(m_vvUsedThreadDrawCommandBuffer[i + 1][CommandBufferIndex])
 				{
-					const auto &GraphicThreadCommandBuffer = m_vvThreadDrawCommandBuffers[i + 1][m_CurImageIndex];
+					const auto &GraphicThreadCommandBuffer = m_vvThreadDrawCommandBuffers[i + 1][CommandBufferIndex];
 					m_vHelperThreadDrawCommandBuffers[ThreadedCommandsUsedCount++] = GraphicThreadCommandBuffer;
 
-					m_vvUsedThreadDrawCommandBuffer[i + 1][m_CurImageIndex] = false;
+					m_vvUsedThreadDrawCommandBuffer[i + 1][CommandBufferIndex] = false;
 				}
 			}
 			if(ThreadedCommandsUsedCount > 0)
@@ -2246,14 +2280,15 @@ protected:
 
 			// special case if swap chain was not completed in one runbuffer call
 
-			if(m_vvUsedThreadDrawCommandBuffer[0][m_CurImageIndex])
+			const size_t MainSecondaryIndex = m_CurImageIndex + (m_RenderSegment * m_SwapChainImageCount);
+			if(m_vvUsedThreadDrawCommandBuffer[0][MainSecondaryIndex])
 			{
-				auto &GraphicThreadCommandBuffer = m_vvThreadDrawCommandBuffers[0][m_CurImageIndex];
+				auto &GraphicThreadCommandBuffer = m_vvThreadDrawCommandBuffers[0][MainSecondaryIndex];
 				vkEndCommandBuffer(GraphicThreadCommandBuffer);
 
 				vkCmdExecuteCommands(CommandBuffer, 1, &GraphicThreadCommandBuffer);
 
-				m_vvUsedThreadDrawCommandBuffer[0][m_CurImageIndex] = false;
+				m_vvUsedThreadDrawCommandBuffer[0][MainSecondaryIndex] = false;
 			}
 		}
 
@@ -2451,6 +2486,7 @@ protected:
 		RenderPassInfo.pClearValues = &ClearColorVal;
 
 		vkCmdBeginRenderPass(CommandBuffer, &RenderPassInfo, m_ThreadCount > 1 ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
+		m_RenderSegment = 0;
 
 		for(auto &LastPipe : m_vLastPipeline)
 			LastPipe = VK_NULL_HANDLE;
@@ -2986,6 +3022,13 @@ protected:
 
 			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			DestinationStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 		}
 		else if(OldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && NewLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
 		{
@@ -4406,7 +4449,9 @@ public:
 		{
 			for(size_t i = 0; i < m_SwapChainImageCount; ++i)
 			{
-				if(!CreateImage(m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, m_vSwapChainMultiSamplingImages[i].m_Image, m_vSwapChainMultiSamplingImages[i].m_ImgMem, VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
+				// This attachment is loaded by the continuation render pass after backdrop
+				// capture, therefore it cannot be a transient attachment.
+				if(!CreateImage(m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, m_vSwapChainMultiSamplingImages[i].m_Image, m_vSwapChainMultiSamplingImages[i].m_ImgMem, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT))
 					return false;
 				m_vSwapChainMultiSamplingImages[i].m_ImgView = CreateImageView(m_vSwapChainMultiSamplingImages[i].m_Image, m_VKSurfFormat.format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
 			}
@@ -4497,6 +4542,41 @@ public:
 		m_FrameBlendEnabledLastFrame = false;
 	}
 
+	[[nodiscard]] bool CreateBackdropImages()
+	{
+		m_vBackdropImages.resize(m_SwapChainImageCount);
+		const uint32_t Width = maximum(1u, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width / 8);
+		const uint32_t Height = maximum(1u, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height / 8);
+		for(auto &Image : m_vBackdropImages)
+		{
+			if(!CreateImage(Width, Height, 1, 1, m_VKSurfFormat.format, VK_IMAGE_TILING_OPTIMAL, Image.m_Image, Image.m_ImgMem, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+				return false;
+			Image.m_ImgView = CreateImageView(Image.m_Image, m_VKSurfFormat.format, VK_IMAGE_VIEW_TYPE_2D, 1, 1);
+			if(!ImageBarrier(Image.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) ||
+				!ImageBarrier(Image.m_Image, 0, 1, 0, 1, m_VKSurfFormat.format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))
+				return false;
+			if(!CreateFrameBlendDescriptorSet(Image))
+				return false;
+		}
+		return true;
+	}
+
+	void DestroyBackdropImages()
+	{
+		for(auto &Image : m_vBackdropImages)
+		{
+			if(Image.m_DescriptorSet.m_Descriptor != VK_NULL_HANDLE)
+				FreeDescriptorSetFromPool(Image.m_DescriptorSet);
+			if(Image.m_ImgView != VK_NULL_HANDLE)
+				vkDestroyImageView(m_VKDevice, Image.m_ImgView, nullptr);
+			if(Image.m_Image != VK_NULL_HANDLE)
+				vkDestroyImage(m_VKDevice, Image.m_Image, nullptr);
+			if(Image.m_ImgMem.m_BufferMem.m_Mem != VK_NULL_HANDLE)
+				FreeImageMemBlock(Image.m_ImgMem);
+		}
+		m_vBackdropImages.clear();
+	}
+
 	void DestroyMultiSamplerImageAttachments()
 	{
 		if(HasMultiSampling())
@@ -4519,7 +4599,8 @@ public:
 		MultiSamplingColorAttachment.format = m_VKSurfFormat.format;
 		MultiSamplingColorAttachment.samples = GetSampleCount();
 		MultiSamplingColorAttachment.loadOp = ClearAttachments ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-		MultiSamplingColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		// The multisample color must survive a mid-frame backdrop boundary.
+		MultiSamplingColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		MultiSamplingColorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 		MultiSamplingColorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		MultiSamplingColorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -4576,11 +4657,29 @@ public:
 			return false;
 		}
 
+		// Render-pass compatibility ignores load/store operations and initial/final
+		// layouts. Consequently all existing graphics pipelines are compatible with
+		// this load-preserving continuation pass.
+		MultiSamplingColorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		MultiSamplingColorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		ColorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+		ColorAttachment.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		CreateRenderPassInfo.pAttachments = HasMultiSamplingTargets ? aAttachments.data() : aAttachments.data() + 1;
+		aAttachments[0] = MultiSamplingColorAttachment;
+		aAttachments[1] = ColorAttachment;
+		if(vkCreateRenderPass(m_VKDevice, &CreateRenderPassInfo, nullptr, &m_VKContinuationRenderPass) != VK_SUCCESS)
+		{
+			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Creating the continuation render pass failed.");
+			return false;
+		}
+
 		return true;
 	}
 
 	void DestroyRenderPass()
 	{
+		vkDestroyRenderPass(m_VKDevice, m_VKContinuationRenderPass, nullptr);
+		m_VKContinuationRenderPass = VK_NULL_HANDLE;
 		vkDestroyRenderPass(m_VKDevice, m_VKRenderPass, nullptr);
 	}
 
@@ -5389,11 +5488,14 @@ public:
 			m_vHelperThreadDrawCommandBuffers.resize(m_ThreadCount);
 			for(auto &ThreadDrawCommandBuffers : m_vvThreadDrawCommandBuffers)
 			{
-				ThreadDrawCommandBuffers.resize(m_SwapChainImageCount);
+				// A backdrop boundary needs independent pre-capture, composite, and post-capture
+				// buffers. Never reset a pre-boundary buffer referenced by
+				// the primary command buffer while recording the continuation.
+				ThreadDrawCommandBuffers.resize(m_SwapChainImageCount * 3);
 			}
 			for(auto &UsedThreadDrawCommandBuffer : m_vvUsedThreadDrawCommandBuffer)
 			{
-				UsedThreadDrawCommandBuffer.resize(m_SwapChainImageCount, false);
+				UsedThreadDrawCommandBuffer.resize(m_SwapChainImageCount * 3, false);
 			}
 		}
 		m_vMemoryCommandBuffers.resize(m_SwapChainImageCount);
@@ -5567,6 +5669,7 @@ public:
 		DestroyRenderPass();
 
 		DestroyFrameBlendImages();
+		DestroyBackdropImages();
 
 		DestroyMultiSamplerImageAttachments();
 
@@ -5709,6 +5812,8 @@ public:
 		if(Ret == 0 && OldSwapChainImageCount == m_SwapChainImageCount)
 		{
 			if(!CreateFrameBlendImages())
+				Ret = -1;
+			if(Ret == 0 && !CreateBackdropImages())
 				Ret = -1;
 		}
 
@@ -6054,6 +6159,13 @@ public:
 			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 			DestinationStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		}
+		else if(OldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			Barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			Barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			SourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+			DestinationStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		}
 		else if(OldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && NewLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
 		{
 			// no layout change: only make the previous frame's copy into the history image
@@ -6386,6 +6498,8 @@ public:
 
 		if(!CreateFrameBlendImages())
 			return -1;
+		if(!CreateBackdropImages())
+			return -1;
 
 		m_vStreamedVertexBuffers.resize(m_ThreadCount);
 		m_vStreamedUniformBuffers.resize(m_ThreadCount);
@@ -6468,10 +6582,11 @@ public:
 		}
 		else
 		{
-			auto &DrawCommandBuffer = m_vvThreadDrawCommandBuffers[RenderThreadIndex][m_CurImageIndex];
-			if(!m_vvUsedThreadDrawCommandBuffer[RenderThreadIndex][m_CurImageIndex])
+			const size_t CommandBufferIndex = m_CurImageIndex + (m_RenderSegment * m_SwapChainImageCount);
+			auto &DrawCommandBuffer = m_vvThreadDrawCommandBuffers[RenderThreadIndex][CommandBufferIndex];
+			if(!m_vvUsedThreadDrawCommandBuffer[RenderThreadIndex][CommandBufferIndex])
 			{
-				m_vvUsedThreadDrawCommandBuffer[RenderThreadIndex][m_CurImageIndex] = true;
+				m_vvUsedThreadDrawCommandBuffer[RenderThreadIndex][CommandBufferIndex] = true;
 
 				vkResetCommandBuffer(DrawCommandBuffer, VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
 
@@ -6483,7 +6598,7 @@ public:
 				InheritanceInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
 				InheritanceInfo.framebuffer = m_vFramebufferList[m_CurImageIndex];
 				InheritanceInfo.occlusionQueryEnable = VK_FALSE;
-				InheritanceInfo.renderPass = m_VKRenderPass;
+				InheritanceInfo.renderPass = m_RenderSegment != 0 ? m_VKContinuationRenderPass : m_VKRenderPass;
 				InheritanceInfo.subpass = 0;
 
 				BeginInfo.pInheritanceInfo = &InheritanceInfo;
@@ -7006,6 +7121,93 @@ public:
 	[[nodiscard]] bool Cmd_Render(const CCommandBuffer::SCommand_Render *pCommand, SRenderCommandExecuteBuffer &ExecBuffer)
 	{
 		return RenderStandard<CCommandBuffer::SVertex, false>(ExecBuffer, pCommand->m_State, pCommand->m_PrimType, pCommand->m_pVertices, pCommand->m_PrimCount);
+	}
+
+	[[nodiscard]] bool Cmd_RenderBackdropBlur(const CCommandBuffer::SCommand_RenderBackdropBlur *pCommand)
+	{
+		if(pCommand->m_NumRects <= 0 || m_RenderingPaused || m_vBackdropImages.empty())
+			return true;
+
+		auto &Primary = GetMainGraphicCommandBuffer();
+		// The marker closes the pre-scoreboard epoch. Joining workers only waits for CPU
+		// recording; vkCmdExecuteCommands and the following pass/transfer commands impose
+		// the GPU order without a queue/device idle.
+		ExecuteCurrentRenderSegment(Primary);
+		vkCmdEndRenderPass(Primary); // resolves the current MSAA color into the swap image
+
+		auto &SwapImage = m_vSwapChainImages[m_CurImageIndex];
+		auto &Backdrop = m_vBackdropImages[m_CurImageIndex];
+		FrameBlendImageBarrier(Primary, SwapImage, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		FrameBlendImageBarrier(Primary, Backdrop.m_Image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		VkImageBlit Blit{};
+		Blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		Blit.srcOffsets[1] = {(int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width, (int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height, 1};
+		Blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+		Blit.dstOffsets[1] = {maximum(1, (int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width / 8), maximum(1, (int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height / 8), 1};
+		vkCmdBlitImage(Primary, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Backdrop.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Blit, m_AllowsLinearBlitting ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+		FrameBlendImageBarrier(Primary, Backdrop.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		// The continuation render pass requires COLOR_ATTACHMENT_OPTIMAL and LOAD. The
+		// swap image already contains the resolved pre-marker scene.
+		FrameBlendImageBarrier(Primary, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+		VkRenderPassBeginInfo Begin{};
+		Begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		Begin.renderPass = m_VKContinuationRenderPass;
+		Begin.framebuffer = m_vFramebufferList[m_CurImageIndex];
+		Begin.renderArea.extent = m_VKSwapImgAndViewportExtent.m_SwapImageViewport;
+		vkCmdBeginRenderPass(Primary, &Begin, m_ThreadCount > 1 ? VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE);
+		m_RenderSegment = 1;
+		for(auto &Pipeline : m_vLastPipeline)
+			Pipeline = VK_NULL_HANDLE;
+
+		// Approximate the shader's rounded SDF with narrow horizontal strips. Each strip
+		// samples the same current-frame 1/8-resolution image, so both cards share one
+		// capture and linear magnification supplies a stable, inexpensive blur.
+		std::vector<CCommandBuffer::SVertex> vVertices;
+		constexpr int Steps = 12;
+		auto AddQuad = [&](float X, float Y, float W, float H) {
+			const float CW = (float)m_CanvasWidth, CH = (float)m_CanvasHeight;
+			for(const vec2 P : {vec2(X, Y), vec2(X + W, Y), vec2(X + W, Y + H), vec2(X, Y + H)})
+			{
+				CCommandBuffer::SVertex V{};
+				V.m_Pos = P;
+				V.m_Tex = vec2(P.x / CW, P.y / CH);
+				V.m_Color = {255, 255, 255, 255};
+				vVertices.push_back(V);
+			}
+		};
+		for(int RectIndex = 0; RectIndex < minimum(pCommand->m_NumRects, 2); ++RectIndex)
+		{
+			const auto &R = pCommand->m_aRects[RectIndex];
+			const float Radius = minimum(pCommand->m_CornerRadius, minimum(R.m_W, R.m_H) * 0.5f);
+			AddQuad(R.m_X, R.m_Y + Radius, R.m_W, R.m_H - 2.0f * Radius);
+			for(int Step = 0; Step < Steps; ++Step)
+			{
+				const float Y0 = Radius * Step / Steps;
+				const float Y1 = Radius * (Step + 1) / Steps;
+				const float Mid = (Y0 + Y1) * 0.5f;
+				const float Inset = Radius - std::sqrt(maximum(0.0f, Radius * Radius - (Radius - Mid) * (Radius - Mid)));
+				AddQuad(R.m_X + Inset, R.m_Y + Y0, R.m_W - 2.0f * Inset, Y1 - Y0);
+				AddQuad(R.m_X + Inset, R.m_Y + R.m_H - Y1, R.m_W - 2.0f * Inset, Y1 - Y0);
+			}
+		}
+		CCommandBuffer::SState State{};
+		State.m_BlendMode = EBlendMode::NONE;
+		State.m_WrapMode = EWrapMode::CLAMP;
+		State.m_Texture = 0;
+		State.m_ScreenTL = vec2(0.0f, 0.0f);
+		State.m_ScreenBR = vec2((float)m_CanvasWidth, (float)m_CanvasHeight);
+		SRenderCommandExecuteBuffer Exec{};
+		Exec.m_ThreadIndex = MAIN_THREAD_INDEX;
+		Exec.m_IndexBuffer = m_IndexBuffer;
+		Exec.m_aDescriptors[0] = Backdrop.m_DescriptorSet;
+		ExecBufferFillDynamicStates(State, Exec);
+		if(!vVertices.empty() && !RenderStandard<CCommandBuffer::SVertex, false>(Exec, State, EPrimitiveType::QUADS, vVertices.data(), vVertices.size() / 4))
+			return false;
+		ExecuteCurrentRenderSegment(Primary);
+		// Segment two owns fresh secondary buffers and contains only sharp scoreboard UI.
+		m_RenderSegment = 2;
+		return true;
 	}
 
 	[[nodiscard]] bool RenderFrameBlend(VkCommandBuffer &MainCommandBuffer)
@@ -8031,9 +8233,10 @@ public:
 				}
 				m_vvThreadCommandLists[ThreadIndex].clear();
 
-				if(!HasErrorFromCmd && m_vvUsedThreadDrawCommandBuffer[ThreadIndex + 1][m_CurImageIndex])
+				const size_t CommandBufferIndex = m_CurImageIndex + (m_RenderSegment * m_SwapChainImageCount);
+				if(!HasErrorFromCmd && m_vvUsedThreadDrawCommandBuffer[ThreadIndex + 1][CommandBufferIndex])
 				{
-					auto &GraphicThreadCommandBuffer = m_vvThreadDrawCommandBuffers[ThreadIndex + 1][m_CurImageIndex];
+					auto &GraphicThreadCommandBuffer = m_vvThreadDrawCommandBuffers[ThreadIndex + 1][CommandBufferIndex];
 					vkEndCommandBuffer(GraphicThreadCommandBuffer);
 				}
 			}
