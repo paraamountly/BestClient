@@ -2886,6 +2886,40 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	// Edge Info (right column block, from RushieClient)
 	RightColumn.HSplitTop(MarginBetweenViews, nullptr, &RightColumn);
 
+	const float FreezeRescueColorLineSize = 25.0f;
+	const float FreezeRescueBlockHeight = LineSize + MarginSmall + LineSize + MarginSmall + LineSize +
+					      2.0f * (FreezeRescueColorLineSize + MarginSmall) + 2.0f * (LineSize + MarginSmall);
+	CUIRect FreezeRescueBlock;
+	RightColumn.HSplitTop(FreezeRescueBlockHeight, &FreezeRescueBlock, &RightColumn);
+	CUIRect FreezeRescueBlockBg = FreezeRescueBlock;
+	FreezeRescueBlockBg.w += BlockPadding;
+	FreezeRescueBlockBg.h += BlockPadding;
+	FreezeRescueBlockBg.x -= BlockPadding * 0.5f;
+	FreezeRescueBlockBg.y -= BlockPadding * 0.5f;
+	FreezeRescueBlockBg.Draw(BlockColor, IGraphics::CORNER_ALL, 10.0f);
+
+	FreezeRescueBlock.HSplitTop(LineSize, &Label, &FreezeRescueBlock);
+	Ui()->DoLabel(&Label, Localize("Freeze Rescue Line"), HeadlineFontSize, TEXTALIGN_ML);
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Content, &FreezeRescueBlock);
+	static CButtonContainer s_FreezeRescueEnabledButton;
+	DoButton_CheckBoxAutoVMarginAndSet(&s_FreezeRescueEnabledButton, Localize("Freeze rescue line"), &g_Config.m_BcFreezeRescueLine, &Content, LineSize);
+	GameClient()->m_Tooltips.DoToolTip(&s_FreezeRescueEnabledButton, &Content, Localize("Shows a guide to nearby frozen teammates. Yellow means hookable now; red means not currently hookable."));
+
+	static CButtonContainer s_FreezeRescueHookableColorButton;
+	static CButtonContainer s_FreezeRescueUnhookableColorButton;
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	DoLine_ColorPicker(&s_FreezeRescueHookableColorButton, FreezeRescueColorLineSize, 13.0f, MarginSmall, &FreezeRescueBlock, Localize("Hookable color"), &g_Config.m_BcFreezeRescueLineHookableColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::BcFreezeRescueLineHookableColor)), false);
+	DoLine_ColorPicker(&s_FreezeRescueUnhookableColorButton, FreezeRescueColorLineSize, 13.0f, MarginSmall, &FreezeRescueBlock, Localize("Unhookable color"), &g_Config.m_BcFreezeRescueLineUnhookableColor, color_cast<ColorRGBA>(ColorHSLA(DefaultConfig::BcFreezeRescueLineUnhookableColor)), false);
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Button, &FreezeRescueBlock);
+	Ui()->DoScrollbarOption(&g_Config.m_BcFreezeRescueLineAlpha, &g_Config.m_BcFreezeRescueLineAlpha, &Button, Localize("Alpha"), 10, 100, &CUi::ms_LinearScrollbarScale, 0, "%");
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Button, &FreezeRescueBlock);
+	Ui()->DoScrollbarOption(&g_Config.m_BcFreezeRescueLineMaxRange, &g_Config.m_BcFreezeRescueLineMaxRange, &Button, Localize("Max range"), 100, 300, &CUi::ms_LinearScrollbarScale, 0, "% hook length");
+
+	RightColumn.HSplitTop(MarginBetweenViews, nullptr, &RightColumn);
+
 	const float EdgeInfoColorPickerLineSize = 25.0f;
 	const float EdgeInfoBlockHeight = LineSize + MarginSmall + LineSize + MarginSmall + 2.0f * (LineSize + MarginSmall) + 3.0f * (EdgeInfoColorPickerLineSize + MarginSmall);
 	CUIRect EdgeInfoBlock;
