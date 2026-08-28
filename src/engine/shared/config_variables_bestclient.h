@@ -155,6 +155,13 @@ MACRO_CONFIG_INT(BcHookComboResetTime, bc_hook_combo_reset_time, 1200, 100, 5000
 MACRO_CONFIG_INT(BcHookComboSoundVolume, bc_hook_combo_sound_volume, 100, 0, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hook combo sound volume")
 MACRO_CONFIG_INT(BcHookComboSize, bc_hook_combo_size, 100, 50, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Hook combo popup size")
 
+// Freeze rescue line
+MACRO_CONFIG_INT(BcFreezeRescueLine, bc_freeze_rescue_line, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show hookability guides to nearby frozen teammates")
+MACRO_CONFIG_COL(BcFreezeRescueLineHookableColor, bc_freeze_rescue_line_hookable_color, 0x2AFF7F, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line hookable color")
+MACRO_CONFIG_COL(BcFreezeRescueLineUnhookableColor, bc_freeze_rescue_line_unhookable_color, 0x00FF7F, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line unhookable color")
+MACRO_CONFIG_INT(BcFreezeRescueLineAlpha, bc_freeze_rescue_line_alpha, 70, 10, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line opacity")
+MACRO_CONFIG_INT(BcFreezeRescueLineMaxRange, bc_freeze_rescue_line_max_range, 160, 100, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line range as a percentage of hook length")
+
 // Swap timer
 MACRO_CONFIG_INT(BcSwapTimer, bc_swap_timer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a HUD timer for pending swap requests")
 MACRO_CONFIG_INT(BcSwapTimerStyle, bc_swap_timer_style, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Swap timer style (0 = HUD, 1 = Nameplate)")

@@ -1645,6 +1645,150 @@ inline bool CPlayers::IsPlayerInfoAvailable(int ClientId) const
 	       GameClient()->m_Snap.m_apPlayerInfos[ClientId] != nullptr;
 }
 
+bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
+{
+	const auto &Local = GameClient()->m_aClients[LocalClientId];
+	const vec2 LocalPos = Local.m_RenderPos;
+	const vec2 TargetPos = GameClient()->m_aClients[TargetClientId].m_RenderPos;
+	const float HookLength = Local.m_Predicted.m_Tuning.m_HookLength;
+	const float HookFireSpeed = Local.m_Predicted.m_Tuning.m_HookFireSpeed;
+	static constexpr float HookStartDistance = CCharacterCore::PhysicalSize() * 1.5f;
+	if(HookLength < HookStartDistance || HookFireSpeed <= 0.0f || distance(LocalPos, TargetPos) <= 0.0f)
+		return false;
+
+	vec2 Direction = normalize(TargetPos - LocalPos);
+	vec2 BasePos = LocalPos;
+	vec2 SegmentStart = BasePos + Direction * HookStartDistance;
+	vec2 QuantizedDirection = Direction;
+	bool EnteredTelehook = false;
+	const int MaxHookTicks = 5 * Client()->GameTickSpeed();
+
+	auto FirstHookablePlayer = [&](vec2 From, vec2 To) {
+		int ClosestId = -1;
+		float ClosestDistance = 0.0f;
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
+		{
+			if(ClientId == LocalClientId || !IsPlayerInfoAvailable(ClientId))
+				continue;
+			if(GameClient()->m_FastPractice.Active() &&
+				GameClient()->m_FastPractice.IsPracticeParticipant(ClientId) != GameClient()->m_FastPractice.IsPracticeParticipant(LocalClientId))
+				continue;
+			const auto &Candidate = GameClient()->m_aClients[ClientId];
+			const bool IsOneSuper = Candidate.m_Super || Local.m_Super;
+			if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(ClientId, LocalClientId) || Candidate.m_Solo || Local.m_Solo || Local.m_HookHitDisabled))
+				continue;
+			vec2 ClosestPoint;
+			if(closest_point_on_line(From, To, Candidate.m_RenderPos, ClosestPoint) &&
+				distance(Candidate.m_RenderPos, ClosestPoint) < CCharacterCore::PhysicalSize() + 2.0f)
+			{
+				const float CandidateDistance = distance(From, Candidate.m_RenderPos);
+				if(ClosestId == -1 || CandidateDistance < ClosestDistance)
+				{
+					ClosestId = ClientId;
+					ClosestDistance = CandidateDistance;
+				}
+			}
+		}
+		return ClosestId;
+	};
+
+	for(int HookTick = 0; HookTick < MaxHookTicks; ++HookTick)
+	{
+		vec2 SegmentEnd = SegmentStart + QuantizedDirection * HookFireSpeed;
+		if(distance(BasePos, SegmentEnd) > HookLength)
+		{
+			if(EnteredTelehook)
+				return false;
+			SegmentEnd = BasePos + normalize(SegmentEnd - BasePos) * HookLength;
+		}
+
+		int Tele = 0;
+		vec2 HitPos;
+		const int Hit = Collision()->IntersectLineTeleHook(SegmentStart, SegmentEnd, &HitPos, nullptr, &Tele);
+		const int HookedPlayer = FirstHookablePlayer(SegmentStart, HitPos);
+		if(HookedPlayer != -1)
+			return HookedPlayer == TargetClientId;
+		if(distance(BasePos, SegmentEnd) >= HookLength)
+			return false;
+		if(!Hit)
+		{
+			SegmentStart = vec2(round_to_int(SegmentEnd.x), round_to_int(SegmentEnd.y));
+			if(HookTick == 0)
+				QuantizedDirection = vec2(round_to_int(Direction.x * 256.0f) / 256.0f, round_to_int(Direction.y * 256.0f) / 256.0f);
+			continue;
+		}
+		if(Hit != TILE_TELEINHOOK)
+			return false;
+		const std::vector<vec2> &vTeleOuts = Collision()->TeleOuts(Tele - 1);
+		if(vTeleOuts.size() != 1)
+			return false;
+		EnteredTelehook = true;
+		BasePos = vTeleOuts[0];
+		SegmentStart = BasePos + Direction * HookStartDistance;
+		SegmentStart = vec2(round_to_int(SegmentStart.x), round_to_int(SegmentStart.y));
+	}
+	return false;
+}
+
+void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int LocalClientId)
+{
+	if(!g_Config.m_BcFreezeRescueLine || Client()->State() != IClient::STATE_ONLINE ||
+		!in_range(LocalClientId, MAX_CLIENTS - 1) || !IsPlayerInfoAvailable(LocalClientId) ||
+		GameClient()->m_Snap.m_SpecInfo.m_Active || aFrozen[LocalClientId])
+		return;
+
+	const auto &Local = GameClient()->m_aClients[LocalClientId];
+	const float HookLength = Local.m_Predicted.m_Tuning.m_HookLength;
+	if(HookLength <= 0.0f)
+		return;
+	const float MaxDistance = HookLength * g_Config.m_BcFreezeRescueLineMaxRange / 100.0f;
+	const bool PracticeActive = GameClient()->m_FastPractice.Active();
+	const float Alpha = g_Config.m_BcFreezeRescueLineAlpha / 100.0f;
+
+	Graphics()->TextureClear();
+	Graphics()->LinesBegin();
+	for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
+	{
+		if(TargetId == LocalClientId || !aFrozen[TargetId] || !IsPlayerInfoAvailable(TargetId) || GameClient()->IsOtherTeam(TargetId))
+			continue;
+		const auto &Target = GameClient()->m_aClients[TargetId];
+		const bool IsOneSuper = Local.m_Super || Target.m_Super;
+		if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(LocalClientId, TargetId) || Local.m_Solo || Target.m_Solo || Local.m_HookHitDisabled))
+			continue;
+		if(PracticeActive && GameClient()->m_FastPractice.IsPracticeParticipant(LocalClientId) != GameClient()->m_FastPractice.IsPracticeParticipant(TargetId))
+			continue;
+		if(Local.m_RenderCur.m_HookedPlayer == TargetId || Local.m_RenderPrev.m_HookedPlayer == TargetId)
+			continue;
+
+		const vec2 Delta = Target.m_RenderPos - Local.m_RenderPos;
+		const float Distance = length(Delta);
+		if(Distance > MaxDistance || Distance <= CCharacterCore::PhysicalSize())
+			continue;
+		const vec2 Direction = Delta / Distance;
+		const vec2 Start = Local.m_RenderPos + Direction * CCharacterCore::PhysicalSize();
+		const vec2 End = Target.m_RenderPos - Direction * CCharacterCore::PhysicalSize();
+		const bool Hookable = DirectHookHitsTarget(LocalClientId, TargetId);
+		ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(Hookable ? g_Config.m_BcFreezeRescueLineHookableColor : g_Config.m_BcFreezeRescueLineUnhookableColor));
+		Graphics()->SetColor(Color.WithMultipliedAlpha(Alpha));
+		if(Hookable)
+		{
+			const IGraphics::CLineItem Line(Start, End);
+			Graphics()->LinesDraw(&Line, 1);
+		}
+		else
+		{
+			const float DashLength = 12.0f * GameClient()->m_Camera.m_Zoom;
+			const float GapLength = 8.0f * GameClient()->m_Camera.m_Zoom;
+			for(float Offset = 0.0f; Offset < distance(Start, End); Offset += DashLength + GapLength)
+			{
+				const IGraphics::CLineItem Dash(Start + Direction * Offset, Start + Direction * minimum(Offset + DashLength, distance(Start, End)));
+				Graphics()->LinesDraw(&Dash, 1);
+			}
+		}
+	}
+	Graphics()->LinesEnd();
+}
+
 void CPlayers::OnRender()
 {
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
@@ -1652,6 +1796,7 @@ void CPlayers::OnRender()
 
 	// update render info for ninja
 	CTeeRenderInfo aRenderInfo[MAX_CLIENTS];
+	bool aFrozen[MAX_CLIENTS] = {};
 	const bool IsTeamPlay = GameClient()->IsTeamPlay();
 	for(int i = 0; i < MAX_CLIENTS; ++i)
 	{
@@ -1687,6 +1832,7 @@ void CPlayers::OnRender()
 
 			Frozen = GameClient()->m_Snap.m_aCharacters[i].m_HasExtendedData && GameClient()->m_Snap.m_aCharacters[i].m_ExtendedData.m_FreezeEnd != 0;
 		}
+		aFrozen[i] = Frozen;
 
 		// TClient
 		if(g_Config.m_TcFrozenKatana > 0 && Frozen)
@@ -1753,6 +1899,7 @@ void CPlayers::OnRender()
 
 	// render everyone else's hook, then our own
 	const int LocalClientId = GameClient()->m_Snap.m_LocalClientId;
+	RenderFreezeRescueLines(aFrozen, LocalClientId);
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 	{
 		if(ClientId == LocalClientId || !IsPlayerInfoAvailable(ClientId))

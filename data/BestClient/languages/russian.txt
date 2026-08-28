@@ -8,6 +8,24 @@
 
 ##### translated strings #####
 
+Freeze Rescue Line
+== Линия спасения из заморозки
+
+Freeze rescue line
+== Линия спасения из заморозки
+
+Shows a guide to nearby frozen teammates. Yellow means hookable now; red means not currently hookable.
+== Показывает ориентир к ближайшим замороженным товарищам. Жёлтый означает, что сейчас можно зацепить крюком; красный — что сейчас нельзя.
+
+Hookable color
+== Цвет доступной цели
+
+Unhookable color
+== Цвет недоступной цели
+
+Max range
+== Максимальная дальность
+
 Clan
 == Клан
 
