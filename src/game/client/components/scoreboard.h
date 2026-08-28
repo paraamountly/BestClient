@@ -36,6 +36,7 @@ class CScoreboard : public CComponent
 	const char *GetTeamName(int Team) const;
 
 	bool m_Active;
+	float m_OpenAnimation = 0.0f;
 
 	IGraphics::CTextureHandle m_DeadTeeTexture;
 

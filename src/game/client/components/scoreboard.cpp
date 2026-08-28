@@ -336,6 +336,7 @@ void CScoreboard::OnInit()
 void CScoreboard::OnReset()
 {
 	m_Active = false;
+	m_OpenAnimation = 0.0f;
 	m_MouseUnlocked = false;
 	m_LastMousePos = std::nullopt;
 }
@@ -527,12 +528,14 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 	// The shared glass backdrop and frame are rendered by OnRender.
 	constexpr float SpectatorCut = 10.0f;
 	Spectators.Margin(SpectatorCut, &Spectators);
+	CUIRect HeaderRect, ContentRect;
+	Spectators.HSplitTop(minimum(20.0f, Spectators.h), &HeaderRect, &ContentRect);
 
 	CTextCursor Cursor;
-	Cursor.SetPosition(Spectators.TopLeft());
-	Cursor.m_FontSize = 11.0f;
-	Cursor.m_LineWidth = Spectators.w;
-	Cursor.m_MaxLines = round_truncate(Spectators.h / Cursor.m_FontSize);
+	Cursor.SetPosition(ContentRect.TopLeft());
+	Cursor.m_FontSize = 10.0f;
+	Cursor.m_LineWidth = ContentRect.w;
+	Cursor.m_MaxLines = maximum(0, round_truncate(ContentRect.h / Cursor.m_FontSize));
 
 	int RemainingSpectators = 0;
 	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByName)
@@ -542,12 +545,8 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 		++RemainingSpectators;
 	}
 
-	Cursor.m_FontSize = 12.0f;
-	TextRender()->TextEx(&Cursor, Localize("Observers"));
-	TextRender()->Text(Spectators.x + Spectators.w - 9.0f, Spectators.y, 12.0f, "⌃");
-	Cursor.m_X = Spectators.x;
-	Cursor.m_Y += 22.0f;
-	Cursor.m_FontSize = 10.0f;
+	Ui()->DoLabel(&HeaderRect, Localize("Observers"), 12.0f, TEXTALIGN_ML);
+	TextRender()->Text(HeaderRect.x + HeaderRect.w - 9.0f, HeaderRect.y, 12.0f, "⌃");
 
 	bool CommaNeeded = false;
 	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByName)
@@ -560,7 +559,9 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 			TextRender()->TextEx(&Cursor, ", ");
 		}
 
-		if(Cursor.m_LineCount == Cursor.m_MaxLines && RemainingSpectators >= 2)
+		if(Cursor.m_MaxLines <= 0)
+			break;
+		if(Cursor.m_LineCount >= Cursor.m_MaxLines && RemainingSpectators >= 2)
 		{
 			// This is less expensive than checking with a separate invisible
 			// text cursor though we waste some space at the end of the line.
@@ -621,12 +622,12 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 		if(Cursor.m_Y != SpectatorRect.y)
 		{
 			LineBreakDetected = true;
-			SpectatorRectLineBreak.x = Spectators.x - SpectatorCut;
+			SpectatorRectLineBreak.x = ContentRect.x - SpectatorCut;
 			SpectatorRectLineBreak.y = Cursor.m_Y;
 			SpectatorRectLineBreak.h = Cursor.m_FontSize;
-			SpectatorRectLineBreak.w = Cursor.m_X - Spectators.x + SpectatorCut + 2 * Margin;
+			SpectatorRectLineBreak.w = Cursor.m_X - ContentRect.x + SpectatorCut + 2 * Margin;
 
-			SpectatorRect.w = Spectators.x + Spectators.w + SpectatorCut - SpectatorRect.x;
+			SpectatorRect.w = ContentRect.x + ContentRect.w + SpectatorCut - SpectatorRect.x;
 		}
 		else
 		{
@@ -689,6 +690,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	const float FontSize = Metrics.m_FontSize;
 
 	// Keep a narrow lane for the contained DDTeam badge. TEAM_FLOCK leaves it empty.
+	constexpr float TeamBadgeLaneWidth = 39.0f;
 	const float ScoreOffset = Scoreboard.x + 44.0f;
 	const float ScoreLength = TextRender()->TextWidth(FontSize, UseTime ? "00:00:00" : "99999");
 	const float TeeOffset = ScoreOffset + ScoreLength + 20.0f;
@@ -795,9 +797,22 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 					if(DDTeam == TEAM_SUPER)
 						str_copy(aBuf, Localize("Super"));
 					else
-						str_format(aBuf, sizeof(aBuf), "%d · %d/%d", DDTeam, DDTeamSize, MaxTeamSize);
+					{
+						char aLongBadge[64];
+						str_format(aLongBadge, sizeof(aLongBadge), "Team %d · %d/%d", DDTeam, DDTeamSize, MaxTeamSize);
+						const float BadgeFontSize = minimum(FontSize * 0.55f, 7.0f);
+						if(TextRender()->TextWidth(BadgeFontSize, aLongBadge) <= TeamBadgeLaneWidth - 4.0f)
+							str_copy(aBuf, aLongBadge);
+						else
+							str_format(aBuf, sizeof(aBuf), "T%d · %d/%d", DDTeam, DDTeamSize, MaxTeamSize);
+					}
 					const float TeamFontSize = minimum(FontSize * 0.55f, 7.0f);
-					TextRender()->Text(Row.x + 5.0f, Row.y + (Row.h - TeamFontSize) / 2.0f, TeamFontSize, aBuf);
+					CTextCursor BadgeCursor;
+					BadgeCursor.SetPosition(vec2(Row.x + 3.0f, Row.y + (Row.h - TeamFontSize) / 2.0f));
+					BadgeCursor.m_FontSize = TeamFontSize;
+					BadgeCursor.m_LineWidth = TeamBadgeLaneWidth - 4.0f;
+					BadgeCursor.m_Flags |= TEXTFLAG_ELLIPSIS_AT_END;
+					TextRender()->TextEx(&BadgeCursor, aBuf);
 				}
 			}
 			PrevDDTeam = DDTeam;
@@ -807,14 +822,13 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				(GameClient()->m_Snap.m_SpecInfo.m_SpectatorId == SPEC_FREEVIEW && pInfo->m_Local) ||
 				(GameClient()->m_Snap.m_SpecInfo.m_Active && pInfo->m_ClientId == GameClient()->m_Snap.m_SpecInfo.m_SpectatorId))
 			{
-				CUIRect Glow = Row;
-				Glow.x -= 2.0f;
-				Glow.y -= 2.0f;
-				Glow.w += 4.0f;
-				Glow.h += 4.0f;
-				Glow.Draw(ColorRGBA(0.48f, 0.31f, 0.82f, 0.16f), IGraphics::CORNER_ALL, Row.h / 2.0f + 2.0f);
-				Row.Draw(ColorRGBA(0.76f, 0.62f, 1.0f, 0.42f), IGraphics::CORNER_ALL, Row.h / 2.0f);
-				CUIRect LocalFill = Row;
+				CUIRect LocalHighlight = Row;
+				LocalHighlight.VMargin(3.0f, &LocalHighlight);
+				CUIRect Glow = LocalHighlight;
+				Glow.Margin(-1.0f, &Glow);
+				Glow.Draw(ColorRGBA(0.48f, 0.31f, 0.82f, 0.16f), IGraphics::CORNER_ALL, Glow.h / 2.0f);
+				LocalHighlight.Draw(ColorRGBA(0.76f, 0.62f, 1.0f, 0.42f), IGraphics::CORNER_ALL, LocalHighlight.h / 2.0f);
+				CUIRect LocalFill = LocalHighlight;
 				LocalFill.Margin(0.9f, &LocalFill);
 				LocalFill.Draw(ColorRGBA(0.48f, 0.34f, 0.72f, 0.28f), IGraphics::CORNER_ALL, LocalFill.h / 2.0f);
 			}
@@ -1036,17 +1050,20 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			GameClient()->m_CountryFlags.Render(ClientData.m_Country, ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f),
 				CountryOffset, Row.y + (Spacing + TeeSizeMod * 5.0f) / 2.0f, CountryLength, Row.h - Spacing - TeeSizeMod * 5.0f);
 
-			// ping
-			if(g_Config.m_ClEnablePingColor)
-			{
-				TextRender()->TextColor(color_cast<ColorRGBA>(ColorHSLA((300.0f - std::clamp(pInfo->m_Latency, 0, 300)) / 1000.0f, 1.0f, 0.5f)));
-			}
-			else
-			{
-				TextRender()->TextColor(TextRender()->DefaultTextColor());
-			}
+			// Compact circular latency badge. The subtle colored ring remains readable
+			// over both light and dark parts of the blurred game scene.
+			const float PingHue = (300.0f - std::clamp(pInfo->m_Latency, 0, 300)) / 1000.0f;
+			const ColorRGBA PingColor = g_Config.m_ClEnablePingColor ? color_cast<ColorRGBA>(ColorHSLA(PingHue, 0.85f, 0.55f)) : ColorRGBA(0.75f, 0.78f, 0.82f, 1.0f);
+			const float PingBadgeSize = minimum(PingLength, maximum(6.0f, Row.h - 2.0f));
+			CUIRect PingBadge = {PingOffset + (PingLength - PingBadgeSize) / 2.0f, Row.y + (Row.h - PingBadgeSize) / 2.0f, PingBadgeSize, PingBadgeSize};
+			PingBadge.Draw(PingColor.WithAlpha(0.38f), IGraphics::CORNER_ALL, PingBadgeSize / 2.0f);
+			CUIRect PingBadgeInner = PingBadge;
+			PingBadgeInner.Margin(minimum(1.2f, PingBadgeSize * 0.12f), &PingBadgeInner);
+			PingBadgeInner.Draw(ColorRGBA(0.06f, 0.07f, 0.09f, 0.48f), IGraphics::CORNER_ALL, PingBadgeInner.h / 2.0f);
 			str_format(aBuf, sizeof(aBuf), "%d", std::clamp(pInfo->m_Latency, 0, 999));
-			TextRender()->Text(PingOffset + PingLength - TextRender()->TextWidth(FontSize, aBuf), Row.y + (Row.h - FontSize) / 2.0f, FontSize, aBuf);
+			const float PingFontSize = minimum(FontSize, PingBadgeSize * 0.55f);
+			TextRender()->TextColor(ColorRGBA(0.96f, 0.97f, 1.0f, TextColor.a));
+			TextRender()->Text(PingBadge.x + (PingBadge.w - TextRender()->TextWidth(PingFontSize, aBuf)) / 2.0f, PingBadge.y + (PingBadge.h - PingFontSize) / 2.0f, PingFontSize, aBuf);
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 			if(CountRendered == CountEnd)
@@ -1103,10 +1120,14 @@ void CScoreboard::OnRender()
 		return;
 
 	if(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideScoreboard)
+	{
+		m_OpenAnimation = 0.0f;
 		return;
+	}
 
 	if(!IsActive())
 	{
+		m_OpenAnimation = 0.0f;
 		// lock mouse if scoreboard was opened by being dead or game pause
 		if(m_MouseUnlocked)
 		{
@@ -1186,21 +1207,35 @@ void CScoreboard::OnRender()
 	const float VerticalFitScale = GlobalScreen.h * 0.88f / (MainHeight + 4.0f + SpectatorsHeight);
 	const float ScoreboardScale = std::clamp(minimum(UserScale, minimum(HorizontalFitScale, VerticalFitScale)), 0.25f, 2.0f);
 	const CUIRect Screen = {0.0f, 0.0f, GlobalScreen.w / ScoreboardScale, GlobalScreen.h / ScoreboardScale};
-	Graphics()->MapScreen(Screen.x, Screen.y, Screen.w, Screen.h);
+
+	// A short ease-out scale opens the complete glass composition around its
+	// center. Changing the mapped logical viewport keeps every child element and
+	// its mouse hit rectangle on the exact same transform without layout reflow.
+	constexpr float OpenDuration = 0.18f;
+	m_OpenAnimation = minimum(1.0f, m_OpenAnimation + Client()->RenderFrameTime() / OpenDuration);
+	const float Ease = 1.0f - std::pow(1.0f - m_OpenAnimation, 3.0f);
+	const float PresentationScale = 0.82f + 0.18f * Ease;
+	const vec2 AnimationCenter = vec2(Screen.w / 2.0f, Screen.h * 0.12f + (MainHeight + 4.0f + SpectatorsHeight) / 2.0f);
+	const CUIRect MappedScreen = {
+		AnimationCenter.x * (1.0f - 1.0f / PresentationScale),
+		AnimationCenter.y * (1.0f - 1.0f / PresentationScale),
+		Screen.w / PresentationScale,
+		Screen.h / PresentationScale};
+	Graphics()->MapScreen(MappedScreen.x, MappedScreen.y, MappedScreen.w, MappedScreen.h);
 	const vec2 RealMousePos = Ui()->MousePos();
 	const vec2 WindowSize = vec2(Graphics()->WindowWidth(), Graphics()->WindowHeight());
-	Ui()->SetMousePos(Ui()->UpdatedMousePos() * vec2(Screen.w, Screen.h) / WindowSize);
+	Ui()->SetMousePos(MappedScreen.TopLeft() + Ui()->UpdatedMousePos() * vec2(MappedScreen.w, MappedScreen.h) / WindowSize);
 
 	CUIRect Scoreboard = {(Screen.w - ScoreboardWidth) / 2.0f, Screen.h * 0.12f, ScoreboardWidth, MainHeight};
 	CScoreboardRenderState RenderState{};
 	CUIRect Spectators = {Scoreboard.x, Scoreboard.y + Scoreboard.h + 4.0f, Scoreboard.w, SpectatorsHeight};
 
 	// Capture the current game frame once; the OpenGL backend builds and reuses one GPU-blurred texture for both cards.
-	const float PixelX = Graphics()->ScreenWidth() / Screen.w;
-	const float PixelY = Graphics()->ScreenHeight() / Screen.h;
+	const float PixelX = Graphics()->ScreenWidth() / MappedScreen.w;
+	const float PixelY = Graphics()->ScreenHeight() / MappedScreen.h;
 	const IGraphics::SBackdropBlurRect aBlurRects[] = {
-		{Scoreboard.x * PixelX, Scoreboard.y * PixelY, Scoreboard.w * PixelX, Scoreboard.h * PixelY},
-		{Spectators.x * PixelX, Spectators.y * PixelY, Spectators.w * PixelX, Spectators.h * PixelY}};
+		{(Scoreboard.x - MappedScreen.x) * PixelX, (Scoreboard.y - MappedScreen.y) * PixelY, Scoreboard.w * PixelX, Scoreboard.h * PixelY},
+		{(Spectators.x - MappedScreen.x) * PixelX, (Spectators.y - MappedScreen.y) * PixelY, Spectators.w * PixelX, Spectators.h * PixelY}};
 	Graphics()->RenderBackdropBlur(aBlurRects, 2, 10.0f * PixelY);
 	auto DrawGlassFrame = [](const CUIRect &Card) {
 		CUIRect Shadow = Card;
