@@ -907,6 +907,9 @@ class CCommandProcessorFragment_Vulkan : public CCommandProcessorFragment_GLBase
 	bool m_OptimalSwapChainImageBlitting = false;
 	bool m_OptimalRGBAImageBlitting = false;
 	bool m_LinearRGBAImageBlitting = false;
+	bool m_BackdropBlitSupported = false;
+	bool m_BackdropLinearBlitSupported = false;
+	bool m_BackdropSamplingSupported = false;
 
 	VkBuffer m_IndexBuffer;
 	SDeviceMemoryBlock m_IndexBufferMemory;
@@ -2230,19 +2233,26 @@ protected:
 		if(m_ThreadCount < 2)
 			return;
 		const size_t SegmentIndex = m_CurImageIndex + (m_RenderSegment * m_SwapChainImageCount);
-		size_t Count = 0;
-		for(size_t ThreadIndex = 0; ThreadIndex < m_ThreadCount; ++ThreadIndex)
+		size_t HelperCount = 0;
+		// Preserve the command stream ordering used by WaitFrame: helper threads own
+		// contiguous leading ranges, while the special main-thread secondary can own
+		// the tail and must therefore execute last.
+		for(size_t ThreadIndex = 1; ThreadIndex < m_ThreadCount; ++ThreadIndex)
 		{
 			if(!m_vvUsedThreadDrawCommandBuffer[ThreadIndex][SegmentIndex])
 				continue;
-			auto &Secondary = m_vvThreadDrawCommandBuffers[ThreadIndex][SegmentIndex];
-			if(ThreadIndex == MAIN_THREAD_INDEX)
-				vkEndCommandBuffer(Secondary);
-			m_vHelperThreadDrawCommandBuffers[Count++] = Secondary;
+			m_vHelperThreadDrawCommandBuffers[HelperCount++] = m_vvThreadDrawCommandBuffers[ThreadIndex][SegmentIndex];
 			m_vvUsedThreadDrawCommandBuffer[ThreadIndex][SegmentIndex] = false;
 		}
-		if(Count != 0)
-			vkCmdExecuteCommands(CommandBuffer, Count, m_vHelperThreadDrawCommandBuffers.data());
+		if(HelperCount != 0)
+			vkCmdExecuteCommands(CommandBuffer, HelperCount, m_vHelperThreadDrawCommandBuffers.data());
+		if(m_vvUsedThreadDrawCommandBuffer[MAIN_THREAD_INDEX][SegmentIndex])
+		{
+			auto &MainSecondary = m_vvThreadDrawCommandBuffers[MAIN_THREAD_INDEX][SegmentIndex];
+			vkEndCommandBuffer(MainSecondary);
+			vkCmdExecuteCommands(CommandBuffer, 1, &MainSecondary);
+			m_vvUsedThreadDrawCommandBuffer[MAIN_THREAD_INDEX][SegmentIndex] = false;
+		}
 		for(auto &Pipeline : m_vLastPipeline)
 			Pipeline = VK_NULL_HANDLE;
 		m_LastCommandsInPipeThreadIndex = 0;
@@ -4234,6 +4244,26 @@ public:
 		return true;
 	}
 
+	void UpdateBackdropFormatCapabilities()
+	{
+		VkFormatProperties Properties{};
+		vkGetPhysicalDeviceFormatProperties(m_VKGPU, m_VKSurfFormat.format, &Properties);
+		const VkFormatFeatureFlags Features = Properties.optimalTilingFeatures;
+		m_BackdropBlitSupported = (Features & VK_FORMAT_FEATURE_BLIT_SRC_BIT) != 0 && (Features & VK_FORMAT_FEATURE_BLIT_DST_BIT) != 0;
+		m_BackdropLinearBlitSupported = m_BackdropBlitSupported && (Features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+		m_BackdropSamplingSupported = (Features & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0;
+		if(!m_BackdropBlitSupported || !m_BackdropSamplingSupported)
+		{
+			log_warn("gfx/vulkan", "Backdrop blur disabled: surface format %d lacks %s%s support.", (int)m_VKSurfFormat.format,
+				m_BackdropBlitSupported ? "" : "blit source/destination",
+				m_BackdropSamplingSupported ? "" : (m_BackdropBlitSupported ? "sampled image" : " and sampled image"));
+		}
+		else if(!m_BackdropLinearBlitSupported)
+		{
+			log_warn("gfx/vulkan", "Surface format %d does not support linear blit filtering; backdrop blur will use nearest filtering.", (int)m_VKSurfFormat.format);
+		}
+	}
+
 	[[nodiscard]] bool CreateSwapChain(VkSwapchainKHR &OldSwapChain)
 	{
 		VkSurfaceCapabilitiesKHR VKSurfCap;
@@ -4256,6 +4286,7 @@ public:
 
 		if(!GetFormat())
 			return false;
+		UpdateBackdropFormatCapabilities();
 
 		OldSwapChain = m_VKSwapChain;
 
@@ -4544,6 +4575,8 @@ public:
 
 	[[nodiscard]] bool CreateBackdropImages()
 	{
+		if(!m_BackdropBlitSupported || !m_BackdropSamplingSupported)
+			return true;
 		m_vBackdropImages.resize(m_SwapChainImageCount);
 		const uint32_t Width = maximum(1u, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width / 8);
 		const uint32_t Height = maximum(1u, m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height / 8);
@@ -4667,6 +4700,13 @@ public:
 		CreateRenderPassInfo.pAttachments = HasMultiSamplingTargets ? aAttachments.data() : aAttachments.data() + 1;
 		aAttachments[0] = MultiSamplingColorAttachment;
 		aAttachments[1] = ColorAttachment;
+		// Make stored attachment contents available to continuation LOAD operations.
+		// This is required for the preserved MSAA image; for the single-sample path it
+		// also complements the explicit transfer-to-color barrier on the swap image.
+		Dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		Dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		Dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		Dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 		if(vkCreateRenderPass(m_VKDevice, &CreateRenderPassInfo, nullptr, &m_VKContinuationRenderPass) != VK_SUCCESS)
 		{
 			SetError(EGfxErrorType::GFX_ERROR_TYPE_INIT, "Creating the continuation render pass failed.");
@@ -7125,7 +7165,7 @@ public:
 
 	[[nodiscard]] bool Cmd_RenderBackdropBlur(const CCommandBuffer::SCommand_RenderBackdropBlur *pCommand)
 	{
-		if(pCommand->m_NumRects <= 0 || m_RenderingPaused || m_vBackdropImages.empty())
+		if(pCommand->m_NumRects <= 0 || m_RenderingPaused || !m_BackdropBlitSupported || !m_BackdropSamplingSupported || m_vBackdropImages.empty())
 			return true;
 
 		auto &Primary = GetMainGraphicCommandBuffer();
@@ -7144,7 +7184,7 @@ public:
 		Blit.srcOffsets[1] = {(int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width, (int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height, 1};
 		Blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
 		Blit.dstOffsets[1] = {maximum(1, (int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.width / 8), maximum(1, (int32_t)m_VKSwapImgAndViewportExtent.m_SwapImageViewport.height / 8), 1};
-		vkCmdBlitImage(Primary, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Backdrop.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Blit, m_AllowsLinearBlitting ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
+		vkCmdBlitImage(Primary, SwapImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Backdrop.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &Blit, m_BackdropLinearBlitSupported ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
 		FrameBlendImageBarrier(Primary, Backdrop.m_Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		// The continuation render pass requires COLOR_ATTACHMENT_OPTIMAL and LOAD. The
 		// swap image already contains the resolved pre-marker scene.
