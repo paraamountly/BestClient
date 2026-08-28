@@ -1765,8 +1765,9 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		if(Distance > MaxDistance || Distance <= CCharacterCore::PhysicalSize())
 			continue;
 		const vec2 Direction = Delta / Distance;
-		const vec2 Start = Local.m_RenderPos + Direction * CCharacterCore::PhysicalSize();
-		const vec2 End = Target.m_RenderPos - Direction * CCharacterCore::PhysicalSize();
+		const float Inset = minimum(CCharacterCore::PhysicalSize(), Distance * 0.4f);
+		const vec2 Start = Local.m_RenderPos + Direction * Inset;
+		const vec2 End = Target.m_RenderPos - Direction * Inset;
 		const bool Hookable = DirectHookHitsTarget(LocalClientId, TargetId);
 		ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(Hookable ? g_Config.m_BcFreezeRescueLineHookableColor : g_Config.m_BcFreezeRescueLineUnhookableColor));
 		Graphics()->SetColor(Color.WithMultipliedAlpha(Alpha));
@@ -1806,7 +1807,8 @@ void CPlayers::OnRender()
 		// predict freeze skin for local / practice participants
 		bool Frozen = false;
 		const bool PracticeParticipant = GameClient()->m_FastPractice.Active() && GameClient()->m_FastPractice.IsPracticeParticipant(i);
-		if(i == GameClient()->m_aLocalIds[0] || i == GameClient()->m_aLocalIds[1] || PracticeParticipant)
+		const bool UsesPredictedFreezeState = i == GameClient()->m_aLocalIds[0] || i == GameClient()->m_aLocalIds[1] || PracticeParticipant;
+		if(UsesPredictedFreezeState)
 		{
 			if(GameClient()->m_aClients[i].m_Predicted.m_FreezeEnd != 0)
 				aRenderInfo[i].m_TeeRenderFlags |= TEE_EFFECT_FROZEN | TEE_NO_WEAPON;
@@ -1832,7 +1834,10 @@ void CPlayers::OnRender()
 
 			Frozen = GameClient()->m_Snap.m_aCharacters[i].m_HasExtendedData && GameClient()->m_Snap.m_aCharacters[i].m_ExtendedData.m_FreezeEnd != 0;
 		}
-		aFrozen[i] = Frozen;
+		const bool LiveFrozen = UsesPredictedFreezeState ?
+						GameClient()->m_aClients[i].m_Predicted.m_LiveFrozen :
+						GameClient()->m_aClients[i].m_LiveFrozen;
+		aFrozen[i] = Frozen || LiveFrozen;
 
 		// TClient
 		if(g_Config.m_TcFrozenKatana > 0 && Frozen)
