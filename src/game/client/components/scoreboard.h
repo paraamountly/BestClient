@@ -37,6 +37,8 @@ class CScoreboard : public CComponent
 
 	bool m_Active;
 	float m_OpenAnimation = 0.0f;
+	bool m_ObserversCollapsed = false;
+	char m_ObserversHeaderButtonId;
 
 	IGraphics::CTextureHandle m_DeadTeeTexture;
 

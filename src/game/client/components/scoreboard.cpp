@@ -62,14 +62,14 @@ namespace
 
 	void RenderPingGauge(IGraphics *pGraphics, vec2 Center, float Diameter, float Quality, ColorRGBA ActiveColor)
 	{
-		constexpr int NumSegments = 28;
+		constexpr int NumSegments = 80;
 		std::array<IGraphics::CFreeformItem, NumSegments> aSegments;
 		const float OuterRadius = Diameter / 2.0f;
 		const float InnerRadius = maximum(OuterRadius - maximum(1.0f, Diameter * 0.11f), 0.0f);
 		for(int i = 0; i < NumSegments; ++i)
 		{
 			const float Angle0 = -pi / 2.0f + 2.0f * pi * i / NumSegments;
-			const float Angle1 = -pi / 2.0f + 2.0f * pi * (i + 0.78f) / NumSegments;
+			const float Angle1 = -pi / 2.0f + 2.0f * pi * (i + 1.0f) / NumSegments;
 			const vec2 Direction0 = vec2(std::cos(Angle0), std::sin(Angle0));
 			const vec2 Direction1 = vec2(std::cos(Angle1), std::sin(Angle1));
 			aSegments[i] = IGraphics::CFreeformItem(
@@ -83,9 +83,25 @@ namespace
 		pGraphics->QuadsBegin();
 		pGraphics->SetColor(ColorRGBA(0.72f, 0.75f, 0.80f, 0.20f));
 		pGraphics->QuadsDrawFreeform(aSegments.data(), NumSegments);
-		const int ActiveSegments = std::clamp((int)std::round(Quality * NumSegments), 1, NumSegments);
+		const float ActiveSegmentProgress = std::clamp(Quality, 0.0f, 1.0f) * NumSegments;
+		const int ActiveSegments = std::clamp((int)std::floor(ActiveSegmentProgress), 0, NumSegments);
 		pGraphics->SetColor(ActiveColor.WithAlpha(0.82f));
-		pGraphics->QuadsDrawFreeform(aSegments.data(), ActiveSegments);
+		if(ActiveSegments > 0)
+			pGraphics->QuadsDrawFreeform(aSegments.data(), ActiveSegments);
+		const float Fraction = ActiveSegmentProgress - ActiveSegments;
+		if(ActiveSegments < NumSegments && Fraction > 0.001f)
+		{
+			const float Angle0 = -pi / 2.0f + 2.0f * pi * ActiveSegments / NumSegments;
+			const float Angle1 = -pi / 2.0f + 2.0f * pi * (ActiveSegments + Fraction) / NumSegments;
+			const vec2 Direction0 = vec2(std::cos(Angle0), std::sin(Angle0));
+			const vec2 Direction1 = vec2(std::cos(Angle1), std::sin(Angle1));
+			const IGraphics::CFreeformItem FractionalSegment(
+				Center + Direction0 * OuterRadius,
+				Center + Direction0 * InnerRadius,
+				Center + Direction1 * OuterRadius,
+				Center + Direction1 * InnerRadius);
+			pGraphics->QuadsDrawFreeform(&FractionalSegment, 1);
+		}
 		pGraphics->QuadsEnd();
 	}
 
@@ -367,6 +383,7 @@ void CScoreboard::OnReset()
 {
 	m_Active = false;
 	m_OpenAnimation = 0.0f;
+	m_ObserversCollapsed = false;
 	m_MouseUnlocked = false;
 	m_LastMousePos = std::nullopt;
 }
@@ -374,6 +391,7 @@ void CScoreboard::OnReset()
 void CScoreboard::OnRelease()
 {
 	m_Active = false;
+	m_OpenAnimation = 0.0f;
 
 	if(m_MouseUnlocked)
 	{
@@ -576,7 +594,27 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 	}
 
 	Ui()->DoLabel(&HeaderRect, Localize("Observers"), 12.0f, TEXTALIGN_ML);
-	TextRender()->Text(HeaderRect.x + HeaderRect.w - 9.0f, HeaderRect.y, 12.0f, "⌃");
+	bool HeaderHovered = false;
+	if(IsActive() && m_MouseUnlocked)
+	{
+		if(Ui()->DoButtonLogic(&m_ObserversHeaderButtonId, 0, &HeaderRect, BUTTONFLAG_LEFT) != 0)
+			m_ObserversCollapsed = !m_ObserversCollapsed;
+		HeaderHovered = Ui()->HotItem() == &m_ObserversHeaderButtonId;
+	}
+	const float ChevronCenterX = HeaderRect.x + HeaderRect.w - 6.0f;
+	const float ChevronCenterY = HeaderRect.y + HeaderRect.h / 2.0f;
+	const float ChevronDirection = m_ObserversCollapsed ? 1.0f : -1.0f;
+	const IGraphics::CLineItem aChevron[] = {
+		{ChevronCenterX - 3.0f, ChevronCenterY - ChevronDirection * 1.5f, ChevronCenterX, ChevronCenterY + ChevronDirection * 1.5f},
+		{ChevronCenterX, ChevronCenterY + ChevronDirection * 1.5f, ChevronCenterX + 3.0f, ChevronCenterY - ChevronDirection * 1.5f}};
+	Graphics()->TextureClear();
+	Graphics()->LinesBegin();
+	Graphics()->SetColor(ColorRGBA(0.92f, 0.94f, 1.0f, HeaderHovered ? 0.95f : 0.62f));
+	Graphics()->LinesDraw(aChevron, std::size(aChevron));
+	Graphics()->LinesEnd();
+
+	if(m_ObserversCollapsed)
+		return;
 
 	bool CommaNeeded = false;
 	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByName)
@@ -1157,33 +1195,41 @@ void CScoreboard::RenderRecordingNotification(float x)
 void CScoreboard::OnRender()
 {
 	if(Client()->State() != IClient::STATE_ONLINE && Client()->State() != IClient::STATE_DEMOPLAYBACK)
+	{
+		m_OpenAnimation = 0.0f;
 		return;
+	}
 
 	if(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideScoreboard)
 	{
 		m_OpenAnimation = 0.0f;
-		return;
-	}
-
-	if(!IsActive())
-	{
-		m_OpenAnimation = 0.0f;
-		// lock mouse if scoreboard was opened by being dead or game pause
 		if(m_MouseUnlocked)
-		{
 			LockMouse();
-		}
 		return;
 	}
 
-	if(!GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
+	const bool TargetVisible = IsActive();
+	if(!TargetVisible && m_MouseUnlocked)
+	{
+		// Interaction ends immediately on logical release, while presentation is
+		// allowed to finish its visual closing transition.
+		LockMouse();
+	}
+
+	constexpr float OpenDuration = 0.18f;
+	const float AnimationStep = Client()->RenderFrameTime() / OpenDuration;
+	m_OpenAnimation = std::clamp(m_OpenAnimation + (TargetVisible ? AnimationStep : -AnimationStep), 0.0f, 1.0f);
+	if(!TargetVisible && m_OpenAnimation <= 0.0f)
+		return;
+
+	if(TargetVisible && !GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
 	{
 		Ui()->StartCheck();
 		Ui()->Update();
 	}
 
 	// if the score board is active, then we should clear the motd message as well
-	if(GameClient()->m_Motd.IsActive())
+	if(TargetVisible && GameClient()->m_Motd.IsActive())
 		GameClient()->m_Motd.Clear();
 
 	const CNetObj_GameInfo *pGameInfoObj = GameClient()->m_Snap.m_pGameInfoObj;
@@ -1239,7 +1285,7 @@ void CScoreboard::OnRender()
 	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByName)
 		NumSpectators += pInfo && pInfo->m_Team == TEAM_SPECTATORS;
 	const bool HasGoals = pGameInfoObj && (pGameInfoObj->m_ScoreLimit || pGameInfoObj->m_TimeLimit || (pGameInfoObj->m_RoundNum && pGameInfoObj->m_RoundCurrent));
-	const float SpectatorContentHeight = NumSpectators == 0 ? 38.0f : 78.0f + maximum(0, (NumSpectators - 8 + 7) / 8) * 12.0f;
+	const float SpectatorContentHeight = m_ObserversCollapsed || NumSpectators == 0 ? 38.0f : 78.0f + maximum(0, (NumSpectators - 8 + 7) / 8) * 12.0f;
 	const float SpectatorsHeight = SpectatorContentHeight + (HasGoals ? 30.0f : 0.0f);
 
 	// Render the whole scoreboard (including its popups and cursor below) through a locally
@@ -1258,8 +1304,6 @@ void CScoreboard::OnRender()
 	// A short ease-out scale opens the complete glass composition around its
 	// center. Changing the mapped logical viewport keeps every child element and
 	// its mouse hit rectangle on the exact same transform without layout reflow.
-	constexpr float OpenDuration = 0.18f;
-	m_OpenAnimation = minimum(1.0f, m_OpenAnimation + Client()->RenderFrameTime() / OpenDuration);
 	const float Ease = 1.0f - std::pow(1.0f - m_OpenAnimation, 3.0f);
 	const float PresentationScale = 0.82f + 0.18f * Ease;
 	const vec2 AnimationCenter = vec2(Screen.w / 2.0f, Screen.h * 0.12f + (MainHeight + 4.0f + SpectatorsHeight) / 2.0f);
@@ -1421,7 +1465,7 @@ void CScoreboard::OnRender()
 
 	RenderRecordingNotification((Screen.w / 7) * 4 + 10);
 
-	if(!GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
+	if(TargetVisible && !GameClient()->m_Menus.IsActive() && !GameClient()->m_Chat.IsActive())
 	{
 		Ui()->RenderPopupMenus();
 
@@ -1436,11 +1480,9 @@ void CScoreboard::OnRender()
 
 bool CScoreboard::IsShown() const
 {
-	if(!IsActive())
-		return false;
 	if(g_Config.m_ClFocusMode && g_Config.m_ClFocusModeHideScoreboard)
 		return false;
-	return true;
+	return IsActive() || m_OpenAnimation > 0.0f;
 }
 
 bool CScoreboard::IsActive() const
