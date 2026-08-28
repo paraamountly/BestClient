@@ -33,122 +33,148 @@
 
 namespace
 {
-void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, bool Developer = false)
-{
-	pGraphics->TextureSet(g_pData->m_aImages[Developer ? IMAGE_BCDEVICON : IMAGE_BCICON].m_Id);
-	pGraphics->QuadsBegin();
-	pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
-	pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
-	const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
-	pGraphics->QuadsDrawTL(&Quad, 1);
-	pGraphics->QuadsEnd();
-}
-
-std::string NormalizeVoiceNameKey(const char *pName)
-{
-	if(!pName)
-		return {};
-
-	const char *pBegin = pName;
-	const char *pEnd = pName + str_length(pName);
-	while(pBegin < pEnd && std::isspace((unsigned char)*pBegin))
-		++pBegin;
-	while(pEnd > pBegin && std::isspace((unsigned char)pEnd[-1]))
-		--pEnd;
-
-	std::string Key;
-	Key.reserve((size_t)(pEnd - pBegin));
-	for(const char *p = pBegin; p < pEnd; ++p)
-		Key.push_back((char)std::tolower((unsigned char)*p));
-	return Key;
-}
-
-bool IsVoiceNameMutedByConfig(const char *pName)
-{
-	const std::string Key = NormalizeVoiceNameKey(pName);
-	if(Key.empty())
-		return false;
-
-	const char *p = g_Config.m_BcVoiceChatMutedNames;
-	while(*p)
+	struct SScoreboardRowMetrics
 	{
-		while(*p == ',' || std::isspace((unsigned char)*p))
-			++p;
-		if(*p == '\0')
-			break;
+		float m_LineHeight;
+		float m_TeeSizeMod;
+		float m_Spacing;
+		float m_RoundRadius;
+		float m_FontSize;
+	};
 
-		const char *pStart = p;
-		while(*p && *p != ',')
-			++p;
-		const char *pEnd = p;
-		while(pEnd > pStart && std::isspace((unsigned char)pEnd[-1]))
-			--pEnd;
-
-		char aName[128];
-		str_truncate(aName, sizeof(aName), pStart, (int)(pEnd - pStart));
-		if(NormalizeVoiceNameKey(aName) == Key)
-			return true;
+	SScoreboardRowMetrics GetScoreboardRowMetrics(int NumRows, bool LowScoreboardWidth)
+	{
+		if(NumRows <= 8)
+			return {24.0f, 0.40f, 3.0f, 5.0f, 12.0f};
+		if(NumRows <= 12)
+			return {25.0f, 0.45f, 2.5f, 5.0f, 12.0f};
+		if(NumRows <= 16)
+			return {20.0f, 0.40f, 0.0f, 2.5f, 12.0f};
+		if(NumRows <= 24)
+			return {13.5f, 0.30f, 0.0f, 2.5f, 10.0f};
+		if(NumRows <= 32)
+			return {10.0f, 0.20f, 0.0f, 2.5f, 8.0f};
+		if(LowScoreboardWidth)
+			return {7.5f, 0.125f, 0.0f, 1.0f, 7.0f};
+		return {5.0f, 0.10f, 0.0f, 1.0f, 5.0f};
 	}
 
-	return false;
-}
-
-int GetVoiceNameVolumePercentByConfig(const char *pName)
-{
-	const std::string Key = NormalizeVoiceNameKey(pName);
-	if(Key.empty())
-		return 100;
-
-	int Volume = 100;
-	const char *p = g_Config.m_BcVoiceChatNameVolumes;
-	while(*p)
+	void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, bool Developer = false)
 	{
-		while(*p == ',' || std::isspace((unsigned char)*p))
-			++p;
-		if(*p == '\0')
-			break;
+		pGraphics->TextureSet(g_pData->m_aImages[Developer ? IMAGE_BCDEVICON : IMAGE_BCICON].m_Id);
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(1.0f, 1.0f, 1.0f, 1.0f);
+		pGraphics->QuadsSetSubset(0.0f, 0.0f, 1.0f, 1.0f);
+		const IGraphics::CQuadItem Quad(Rect.x, Rect.y, Rect.w, Rect.h);
+		pGraphics->QuadsDrawTL(&Quad, 1);
+		pGraphics->QuadsEnd();
+	}
 
-		const char *pStart = p;
-		while(*p && *p != ',')
-			++p;
-		const char *pEnd = p;
-		while(pEnd > pStart && std::isspace((unsigned char)pEnd[-1]))
+	std::string NormalizeVoiceNameKey(const char *pName)
+	{
+		if(!pName)
+			return {};
+
+		const char *pBegin = pName;
+		const char *pEnd = pName + str_length(pName);
+		while(pBegin < pEnd && std::isspace((unsigned char)*pBegin))
+			++pBegin;
+		while(pEnd > pBegin && std::isspace((unsigned char)pEnd[-1]))
 			--pEnd;
-		if(pEnd <= pStart)
-			continue;
 
-		const char *pSep = nullptr;
-		for(const char *q = pStart; q < pEnd; ++q)
+		std::string Key;
+		Key.reserve((size_t)(pEnd - pBegin));
+		for(const char *p = pBegin; p < pEnd; ++p)
+			Key.push_back((char)std::tolower((unsigned char)*p));
+		return Key;
+	}
+
+	bool IsVoiceNameMutedByConfig(const char *pName)
+	{
+		const std::string Key = NormalizeVoiceNameKey(pName);
+		if(Key.empty())
+			return false;
+
+		const char *p = g_Config.m_BcVoiceChatMutedNames;
+		while(*p)
 		{
-			if(*q == '=' || *q == ':')
-			{
-				pSep = q;
+			while(*p == ',' || std::isspace((unsigned char)*p))
+				++p;
+			if(*p == '\0')
 				break;
-			}
+
+			const char *pStart = p;
+			while(*p && *p != ',')
+				++p;
+			const char *pEnd = p;
+			while(pEnd > pStart && std::isspace((unsigned char)pEnd[-1]))
+				--pEnd;
+
+			char aName[128];
+			str_truncate(aName, sizeof(aName), pStart, (int)(pEnd - pStart));
+			if(NormalizeVoiceNameKey(aName) == Key)
+				return true;
 		}
-		if(!pSep)
-			continue;
 
-		const char *pNameEnd = pSep;
-		while(pNameEnd > pStart && std::isspace((unsigned char)pNameEnd[-1]))
-			--pNameEnd;
-		const char *pValueStart = pSep + 1;
-		while(pValueStart < pEnd && std::isspace((unsigned char)*pValueStart))
-			++pValueStart;
-		if(pNameEnd <= pStart || pValueStart >= pEnd)
-			continue;
-
-		char aName[128];
-		char aValue[16];
-		str_truncate(aName, sizeof(aName), pStart, (int)(pNameEnd - pStart));
-		if(NormalizeVoiceNameKey(aName) != Key)
-			continue;
-		str_truncate(aValue, sizeof(aValue), pValueStart, (int)(pEnd - pValueStart));
-		Volume = std::clamp(str_toint(aValue), 0, 100);
+		return false;
 	}
 
-	return std::clamp(Volume, 1, 100);
-}
+	int GetVoiceNameVolumePercentByConfig(const char *pName)
+	{
+		const std::string Key = NormalizeVoiceNameKey(pName);
+		if(Key.empty())
+			return 100;
+
+		int Volume = 100;
+		const char *p = g_Config.m_BcVoiceChatNameVolumes;
+		while(*p)
+		{
+			while(*p == ',' || std::isspace((unsigned char)*p))
+				++p;
+			if(*p == '\0')
+				break;
+
+			const char *pStart = p;
+			while(*p && *p != ',')
+				++p;
+			const char *pEnd = p;
+			while(pEnd > pStart && std::isspace((unsigned char)pEnd[-1]))
+				--pEnd;
+			if(pEnd <= pStart)
+				continue;
+
+			const char *pSep = nullptr;
+			for(const char *q = pStart; q < pEnd; ++q)
+			{
+				if(*q == '=' || *q == ':')
+				{
+					pSep = q;
+					break;
+				}
+			}
+			if(!pSep)
+				continue;
+
+			const char *pNameEnd = pSep;
+			while(pNameEnd > pStart && std::isspace((unsigned char)pNameEnd[-1]))
+				--pNameEnd;
+			const char *pValueStart = pSep + 1;
+			while(pValueStart < pEnd && std::isspace((unsigned char)*pValueStart))
+				++pValueStart;
+			if(pNameEnd <= pStart || pValueStart >= pEnd)
+				continue;
+
+			char aName[128];
+			char aValue[16];
+			str_truncate(aName, sizeof(aName), pStart, (int)(pNameEnd - pStart));
+			if(NormalizeVoiceNameKey(aName) != Key)
+				continue;
+			str_truncate(aValue, sizeof(aValue), pValueStart, (int)(pEnd - pValueStart));
+			Volume = std::clamp(str_toint(aValue), 0, 100);
+		}
+
+		return std::clamp(Volume, 1, 100);
+	}
 }
 
 CScoreboard::CScoreboard()
@@ -517,7 +543,7 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 	}
 
 	Cursor.m_FontSize = 12.0f;
-	TextRender()->TextEx(&Cursor, Localize("Spectators"));
+	TextRender()->TextEx(&Cursor, Localize("Observers"));
 	TextRender()->Text(Spectators.x + Spectators.w - 9.0f, Spectators.y, 12.0f, "⌃");
 	Cursor.m_X = Spectators.x;
 	Cursor.m_Y += 22.0f;
@@ -641,6 +667,7 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart, int CountEnd, CScoreboardRenderState &State)
 {
 	dbg_assert(Team == TEAM_RED || Team == TEAM_BLUE, "Team invalid");
+	(void)State;
 
 	const CNetObj_GameInfo *pGameInfoObj = GameClient()->m_Snap.m_pGameInfoObj;
 	const CNetObj_GameData *pGameDataObj = GameClient()->m_Snap.m_pGameDataObj;
@@ -654,70 +681,15 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 
 	const bool UseTime = Race7 || TimeScore || MillisecondScore;
 
-	// calculate measurements
-	float LineHeight;
-	float TeeSizeMod;
-	float Spacing;
-	float RoundRadius;
-	float FontSize;
-	if(NumPlayers <= 8)
-	{
-		LineHeight = 24.0f;
-		TeeSizeMod = 0.40f;
-		Spacing = 3.0f;
-		RoundRadius = 5.0f;
-		FontSize = 12.0f;
-	}
-	else if(NumPlayers <= 12)
-	{
-		LineHeight = 25.0f;
-		TeeSizeMod = 0.45f;
-		Spacing = 2.5f;
-		RoundRadius = 5.0f;
-		FontSize = 12.0f;
-	}
-	else if(NumPlayers <= 16)
-	{
-		LineHeight = 20.0f;
-		TeeSizeMod = 0.4f;
-		Spacing = 0.0f;
-		RoundRadius = 2.5f;
-		FontSize = 12.0f;
-	}
-	else if(NumPlayers <= 24)
-	{
-		LineHeight = 13.5f;
-		TeeSizeMod = 0.3f;
-		Spacing = 0.0f;
-		RoundRadius = 2.5f;
-		FontSize = 10.0f;
-	}
-	else if(NumPlayers <= 32)
-	{
-		LineHeight = 10.0f;
-		TeeSizeMod = 0.2f;
-		Spacing = 0.0f;
-		RoundRadius = 2.5f;
-		FontSize = 8.0f;
-	}
-	else if(LowScoreboardWidth)
-	{
-		LineHeight = 7.5f;
-		TeeSizeMod = 0.125f;
-		Spacing = 0.0f;
-		RoundRadius = 1.0f;
-		FontSize = 7.0f;
-	}
-	else
-	{
-		LineHeight = 5.0f;
-		TeeSizeMod = 0.1f;
-		Spacing = 0.0f;
-		RoundRadius = 1.0f;
-		FontSize = 5.0f;
-	}
+	const SScoreboardRowMetrics Metrics = GetScoreboardRowMetrics(NumPlayers, LowScoreboardWidth);
+	const float LineHeight = Metrics.m_LineHeight;
+	const float TeeSizeMod = Metrics.m_TeeSizeMod;
+	const float Spacing = Metrics.m_Spacing;
+	const float RoundRadius = Metrics.m_RoundRadius;
+	const float FontSize = Metrics.m_FontSize;
 
-	const float ScoreOffset = Scoreboard.x + 20.0f;
+	// Keep a narrow lane for the contained DDTeam badge. TEAM_FLOCK leaves it empty.
+	const float ScoreOffset = Scoreboard.x + 44.0f;
 	const float ScoreLength = TextRender()->TextWidth(FontSize, UseTime ? "00:00:00" : "99999");
 	const float TeeOffset = ScoreOffset + ScoreLength + 20.0f;
 	const float TeeLength = 60.0f * TeeSizeMod;
@@ -733,7 +705,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	const float PointsLength = ShowPoints ? 50.0f : 0.0f;
 	const float PointsOffset = NameOffset + NameLength + (ShowPoints ? 7.5f : 0.0f);
 	const float ClanOffset = ShowPoints ? (PointsOffset + PointsLength + 7.5f) : (NameOffset + NameLength + 2.5f);
-	const float ClanLength = CountryOffset - ClanOffset - 2.5f;
+	const float ClanLength = maximum(CountryOffset - ClanOffset - 2.5f, 1.0f);
 
 	// render headlines
 	const float HeadlineFontsize = 11.0f;
@@ -756,8 +728,6 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	// render player entries
 	int CountRendered = 0;
 	int PrevDDTeam = -1;
-	int &CurrentDDTeamSize = State.m_CurrentDDTeamSize;
-
 	char aBuf[64];
 	int MaxTeamSize = Config()->m_SvMaxTeamSize;
 
@@ -794,18 +764,10 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				break;
 			}
 
-			if(PrevDDTeam == -1)
-			{
-				for(int j = i - 1; j >= 0; j--)
-				{
-					const CNetObj_PlayerInfo *pInfoPrev = GameClient()->m_Snap.m_apInfoByDDTeamScore[j];
-					if(!pInfoPrev || pInfoPrev->m_Team != Team)
-						continue;
-
-					PrevDDTeam = GameClient()->m_Teams.Team(pInfoPrev->m_ClientId);
-					break;
-				}
-			}
+			// Every rendered column is an independent visual group. Do not let a
+			// DDTeam continue through the left/right or three-column boundary.
+			if(CountRendered == CountEnd)
+				NextDDTeam = -1;
 
 			CUIRect RowAndSpacing, Row;
 			Scoreboard.HSplitTop(LineHeight + Spacing, &RowAndSpacing, &Scoreboard);
@@ -815,46 +777,27 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			if(DDTeam != TEAM_FLOCK)
 			{
 				const ColorRGBA TeamColor = GameClient()->GetDDTeamColor(DDTeam);
+				CUIRect TeamBackground = RowAndSpacing;
+				TeamBackground.VMargin(3.0f, &TeamBackground);
 				int TeamRectCorners = 0;
 				if(PrevDDTeam != DDTeam)
-				{
 					TeamRectCorners |= IGraphics::CORNER_T;
-					State.m_TeamStartX = Row.x;
-					State.m_TeamStartY = Row.y;
-				}
 				if(NextDDTeam != DDTeam)
 					TeamRectCorners |= IGraphics::CORNER_B;
 
-				RowAndSpacing.Draw(TeamColor.WithAlpha(0.5f), TeamRectCorners, RoundRadius);
+				TeamBackground.Draw(TeamColor.WithAlpha(0.20f), TeamRectCorners, RoundRadius);
 
-				CurrentDDTeamSize++;
-
-				if(NextDDTeam != DDTeam)
+				if(PrevDDTeam != DDTeam)
 				{
-					const float TeamFontSize = FontSize / 1.5f;
-
-					if(NumPlayers > 8)
-					{
-						if(DDTeam == TEAM_SUPER)
-							str_copy(aBuf, Localize("Super"));
-						else if(CurrentDDTeamSize <= 1)
-							str_format(aBuf, sizeof(aBuf), "%d", DDTeam);
-						else
-							str_format(aBuf, sizeof(aBuf), Localize("%d\n(%d/%d)", "Team and size"), DDTeam, CurrentDDTeamSize, MaxTeamSize);
-						TextRender()->Text(State.m_TeamStartX, maximum(State.m_TeamStartY + Row.h / 2.0f - TeamFontSize, State.m_TeamStartY + 1.5f /* padding top */), TeamFontSize, aBuf);
-					}
+					int DDTeamSize = 0;
+					for(const CNetObj_PlayerInfo *pTeamInfo : GameClient()->m_Snap.m_apInfoByDDTeamScore)
+						DDTeamSize += pTeamInfo && pTeamInfo->m_Team == Team && GameClient()->m_Teams.Team(pTeamInfo->m_ClientId) == DDTeam;
+					if(DDTeam == TEAM_SUPER)
+						str_copy(aBuf, Localize("Super"));
 					else
-					{
-						if(DDTeam == TEAM_SUPER)
-							str_copy(aBuf, Localize("Super"));
-						else if(CurrentDDTeamSize > 1)
-							str_format(aBuf, sizeof(aBuf), Localize("Team %d (%d/%d)"), DDTeam, CurrentDDTeamSize, MaxTeamSize);
-						else
-							str_format(aBuf, sizeof(aBuf), Localize("Team %d"), DDTeam);
-						TextRender()->Text(Row.x + Row.w / 2.0f - TextRender()->TextWidth(TeamFontSize, aBuf) / 2.0f + 5.0f, Row.y + Row.h, TeamFontSize, aBuf);
-					}
-
-					CurrentDDTeamSize = 0;
+						str_format(aBuf, sizeof(aBuf), "%d · %d/%d", DDTeam, DDTeamSize, MaxTeamSize);
+					const float TeamFontSize = minimum(FontSize * 0.55f, 7.0f);
+					TextRender()->Text(Row.x + 5.0f, Row.y + (Row.h - TeamFontSize) / 2.0f, TeamFontSize, aBuf);
 				}
 			}
 			PrevDDTeam = DDTeam;
@@ -1207,6 +1150,29 @@ void CScoreboard::OnRender()
 	const float ScoreboardWidthBase = !Teams && NumPlayers <= 16 ? ScoreboardSmallWidth : 750.0f;
 	const float ScoreboardWidth = ScoreboardWidthBase + (ShowPoints ? NumScoreboardColumns * PointsColumnExtra : 0.0f);
 	const float TitleHeight = 30.0f;
+	int RowsPerColumn = NumPlayers;
+	if(!Teams && NumPlayers > 16 && NumPlayers <= 24)
+		RowsPerColumn = 12;
+	else if(!Teams && NumPlayers <= 32)
+		RowsPerColumn = minimum(NumPlayers, 16);
+	else if(!Teams && NumPlayers <= 48)
+		RowsPerColumn = minimum(NumPlayers, 24);
+	else if(!Teams && NumPlayers <= 64)
+		RowsPerColumn = minimum(NumPlayers, 32);
+	else if(!Teams && NumPlayers > 64)
+		RowsPerColumn = (int)std::ceil(128.0f / 3.0f);
+	const float ColumnWidth = ScoreboardWidth / NumScoreboardColumns;
+	const SScoreboardRowMetrics RowMetrics = GetScoreboardRowMetrics(RowsPerColumn, ColumnWidth < 350.0f);
+	constexpr float HeadlineHeight = 22.0f;
+	constexpr float BottomPadding = 6.0f;
+	const float RequiredMainHeight = TitleHeight + HeadlineHeight + RowsPerColumn * (RowMetrics.m_LineHeight + RowMetrics.m_Spacing) + BottomPadding;
+
+	int NumSpectators = 0;
+	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByName)
+		NumSpectators += pInfo && pInfo->m_Team == TEAM_SPECTATORS;
+	const bool HasGoals = pGameInfoObj && (pGameInfoObj->m_ScoreLimit || pGameInfoObj->m_TimeLimit || (pGameInfoObj->m_RoundNum && pGameInfoObj->m_RoundCurrent));
+	const float SpectatorContentHeight = NumSpectators == 0 ? 38.0f : 78.0f + maximum(0, (NumSpectators - 8 + 7) / 8) * 12.0f;
+	const float SpectatorsHeight = SpectatorContentHeight + (HasGoals ? 30.0f : 0.0f);
 
 	// Render the whole scoreboard (including its popups and cursor below) through a locally
 	// scaled screen so bc_scoreboard_scale can grow/shrink it independently of ui_scale, while
@@ -1215,18 +1181,19 @@ void CScoreboard::OnRender()
 	const CUIRect GlobalScreen = *Ui()->Screen();
 	const float UserScale = std::clamp(g_Config.m_BcScoreboardScale / 100.0f, 0.5f, 2.0f);
 	const float HorizontalMargin = 40.0f;
-	const float FitScale = ScoreboardWidth > 0.0f ? GlobalScreen.w / (ScoreboardWidth + HorizontalMargin * 2.0f) : UserScale;
-	const float ScoreboardScale = std::clamp(minimum(UserScale, FitScale), 0.25f, 2.0f);
+	const float HorizontalFitScale = ScoreboardWidth > 0.0f ? GlobalScreen.w / (ScoreboardWidth + HorizontalMargin * 2.0f) : UserScale;
+	const float MainHeight = maximum(305.0f, RequiredMainHeight);
+	const float VerticalFitScale = GlobalScreen.h * 0.88f / (MainHeight + 4.0f + SpectatorsHeight);
+	const float ScoreboardScale = std::clamp(minimum(UserScale, minimum(HorizontalFitScale, VerticalFitScale)), 0.25f, 2.0f);
 	const CUIRect Screen = {0.0f, 0.0f, GlobalScreen.w / ScoreboardScale, GlobalScreen.h / ScoreboardScale};
 	Graphics()->MapScreen(Screen.x, Screen.y, Screen.w, Screen.h);
 	const vec2 RealMousePos = Ui()->MousePos();
 	const vec2 WindowSize = vec2(Graphics()->WindowWidth(), Graphics()->WindowHeight());
 	Ui()->SetMousePos(Ui()->UpdatedMousePos() * vec2(Screen.w, Screen.h) / WindowSize);
 
-	const float MainHeight = !Teams && NumPlayers <= 16 ? minimum(305.0f, Screen.h * 0.52f) : 355.0f + TitleHeight;
 	CUIRect Scoreboard = {(Screen.w - ScoreboardWidth) / 2.0f, Screen.h * 0.12f, ScoreboardWidth, MainHeight};
 	CScoreboardRenderState RenderState{};
-	CUIRect Spectators = {(Screen.w - ScoreboardSmallWidth) / 2.0f, Scoreboard.y + Scoreboard.h + 4.0f, ScoreboardSmallWidth, 78.0f};
+	CUIRect Spectators = {Scoreboard.x, Scoreboard.y + Scoreboard.h + 4.0f, Scoreboard.w, SpectatorsHeight};
 
 	// Capture the current game frame once; the OpenGL backend builds and reuses one GPU-blurred texture for both cards.
 	const float PixelX = Graphics()->ScreenWidth() / Screen.w;
@@ -1361,7 +1328,7 @@ void CScoreboard::OnRender()
 		}
 	}
 
-	if(pGameInfoObj && (pGameInfoObj->m_ScoreLimit || pGameInfoObj->m_TimeLimit || (pGameInfoObj->m_RoundNum && pGameInfoObj->m_RoundCurrent)))
+	if(HasGoals)
 	{
 		CUIRect Goals;
 		Spectators.HSplitTop(25.0f, &Goals, &Spectators);
