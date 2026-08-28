@@ -1075,6 +1075,9 @@ ERunCommandReturnTypes CCommandProcessorFragment_OpenGL::RunCommand(const CComma
 	case CCommandBuffer::CMD_RENDER_TEX3D:
 		Cmd_RenderTex3D(static_cast<const CCommandBuffer::SCommand_RenderTex3D *>(pBaseCommand));
 		break;
+	case CCommandBuffer::CMD_RENDER_BACKDROP_BLUR:
+		Cmd_RenderBackdropBlur(static_cast<const CCommandBuffer::SCommand_RenderBackdropBlur *>(pBaseCommand));
+		break;
 	case CCommandBuffer::CMD_TRY_SWAP_AND_READ_PIXEL:
 		Cmd_ReadPixel(static_cast<const CCommandBuffer::SCommand_TrySwapAndReadPixel *>(pBaseCommand));
 		break;

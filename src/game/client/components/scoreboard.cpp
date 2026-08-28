@@ -498,8 +498,8 @@ void CScoreboard::RenderGoals(CUIRect Goals)
 
 void CScoreboard::RenderSpectators(CUIRect Spectators)
 {
-	Spectators.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_ALL, 7.5f);
-	constexpr float SpectatorCut = 5.0f;
+	// The shared glass backdrop and frame are rendered by OnRender.
+	constexpr float SpectatorCut = 10.0f;
 	Spectators.Margin(SpectatorCut, &Spectators);
 
 	CTextCursor Cursor;
@@ -516,12 +516,12 @@ void CScoreboard::RenderSpectators(CUIRect Spectators)
 		++RemainingSpectators;
 	}
 
+	Cursor.m_FontSize = 12.0f;
 	TextRender()->TextEx(&Cursor, Localize("Spectators"));
-
-	if(RemainingSpectators > 0)
-	{
-		TextRender()->TextEx(&Cursor, ": ");
-	}
+	TextRender()->Text(Spectators.x + Spectators.w - 9.0f, Spectators.y, 12.0f, "⌃");
+	Cursor.m_X = Spectators.x;
+	Cursor.m_Y += 22.0f;
+	Cursor.m_FontSize = 10.0f;
 
 	bool CommaNeeded = false;
 	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByName)
@@ -662,9 +662,9 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	float FontSize;
 	if(NumPlayers <= 8)
 	{
-		LineHeight = 30.0f;
-		TeeSizeMod = 0.5f;
-		Spacing = 8.0f;
+		LineHeight = 24.0f;
+		TeeSizeMod = 0.40f;
+		Spacing = 3.0f;
 		RoundRadius = 5.0f;
 		FontSize = 12.0f;
 	}
@@ -864,7 +864,16 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				(GameClient()->m_Snap.m_SpecInfo.m_SpectatorId == SPEC_FREEVIEW && pInfo->m_Local) ||
 				(GameClient()->m_Snap.m_SpecInfo.m_Active && pInfo->m_ClientId == GameClient()->m_Snap.m_SpecInfo.m_SpectatorId))
 			{
-				Row.Draw(ColorRGBA(1.0f, 1.0f, 1.0f, 0.25f), IGraphics::CORNER_ALL, RoundRadius);
+				CUIRect Glow = Row;
+				Glow.x -= 2.0f;
+				Glow.y -= 2.0f;
+				Glow.w += 4.0f;
+				Glow.h += 4.0f;
+				Glow.Draw(ColorRGBA(0.48f, 0.31f, 0.82f, 0.16f), IGraphics::CORNER_ALL, Row.h / 2.0f + 2.0f);
+				Row.Draw(ColorRGBA(0.48f, 0.34f, 0.72f, 0.28f), IGraphics::CORNER_ALL, Row.h / 2.0f);
+				CUIRect LocalBorder = Row;
+				LocalBorder.Margin(0.8f, &LocalBorder);
+				LocalBorder.Draw(ColorRGBA(0.76f, 0.62f, 1.0f, 0.42f), IGraphics::CORNER_ALL, LocalBorder.h / 2.0f);
 			}
 
 			const CGameClient::CClientData &ClientData = GameClient()->m_aClients[pInfo->m_ClientId];
@@ -880,7 +889,7 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				if(Ui()->HotItem() == &m_aPlayers[pInfo->m_ClientId].m_PlayerButtonId ||
 					(Ui()->IsPopupOpen(&m_ScoreboardPopupContext) && m_ScoreboardPopupContext.m_ClientId == pInfo->m_ClientId))
 				{
-					Row.Draw(ColorRGBA(0.7f, 0.7f, 0.7f, 0.7f), IGraphics::CORNER_ALL, RoundRadius);
+					Row.Draw(ColorRGBA(0.9f, 0.9f, 1.0f, 0.12f), IGraphics::CORNER_ALL, Row.h / 2.0f);
 				}
 			}
 
@@ -1186,7 +1195,7 @@ void CScoreboard::OnRender()
 	else
 		str_format(aPlayerCount, sizeof(aPlayerCount), "%d", GameClient()->m_Snap.m_NumPlayers);
 
-	const float ScoreboardSmallWidth = 375.0f + 10.0f;
+	const float ScoreboardSmallWidth = 340.0f;
 	const bool ShowPoints = GameClient()->m_ShowPoints.ActiveOnCurrentServer();
 	int NumScoreboardColumns = 1;
 	if(Teams || (!Teams && NumPlayers > 16 && NumPlayers <= 64))
@@ -1214,8 +1223,33 @@ void CScoreboard::OnRender()
 	const vec2 WindowSize = vec2(Graphics()->WindowWidth(), Graphics()->WindowHeight());
 	Ui()->SetMousePos(Ui()->UpdatedMousePos() * vec2(Screen.w, Screen.h) / WindowSize);
 
-	CUIRect Scoreboard = {(Screen.w - ScoreboardWidth) / 2.0f, 75.0f, ScoreboardWidth, 355.0f + TitleHeight};
+	const float MainHeight = !Teams && NumPlayers <= 16 ? minimum(305.0f, Screen.h * 0.52f) : 355.0f + TitleHeight;
+	CUIRect Scoreboard = {(Screen.w - ScoreboardWidth) / 2.0f, Screen.h * 0.12f, ScoreboardWidth, MainHeight};
 	CScoreboardRenderState RenderState{};
+	CUIRect Spectators = {(Screen.w - ScoreboardSmallWidth) / 2.0f, Scoreboard.y + Scoreboard.h + 4.0f, ScoreboardSmallWidth, 78.0f};
+
+	// Capture the current game frame once; the OpenGL backend builds and reuses one GPU-blurred texture for both cards.
+	const float PixelX = Graphics()->WindowWidth() / Screen.w;
+	const float PixelY = Graphics()->WindowHeight() / Screen.h;
+	const IGraphics::SBackdropBlurRect aBlurRects[] = {
+		{Scoreboard.x * PixelX, Scoreboard.y * PixelY, Scoreboard.w * PixelX, Scoreboard.h * PixelY},
+		{Spectators.x * PixelX, Spectators.y * PixelY, Spectators.w * PixelX, Spectators.h * PixelY}};
+	Graphics()->RenderBackdropBlur(aBlurRects, 2, 10.0f * PixelY);
+	auto DrawGlassFrame = [](const CUIRect &Card) {
+		CUIRect Shadow = Card;
+		Shadow.x -= 3.0f;
+		Shadow.y -= 2.0f;
+		Shadow.w += 6.0f;
+		Shadow.h += 7.0f;
+		Shadow.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.16f), IGraphics::CORNER_ALL, 11.0f);
+		Card.Draw(ColorRGBA(0.10f, 0.11f, 0.13f, 0.22f), IGraphics::CORNER_ALL, 10.0f);
+		CUIRect Border = Card;
+		Border.Draw(ColorRGBA(0.82f, 0.84f, 0.88f, 0.16f), IGraphics::CORNER_ALL, 10.0f);
+		Border.Margin(1.0f, &Border);
+		Border.Draw(ColorRGBA(0.08f, 0.09f, 0.11f, 0.10f), IGraphics::CORNER_ALL, 9.0f);
+	};
+	DrawGlassFrame(Scoreboard);
+	DrawGlassFrame(Spectators);
 
 	if(Teams)
 	{
@@ -1270,8 +1304,6 @@ void CScoreboard::OnRender()
 
 		RedTitle.Draw(ColorRGBA(0.975f, 0.17f, 0.17f, 0.5f), IGraphics::CORNER_T, 7.5f);
 		BlueTitle.Draw(ColorRGBA(0.17f, 0.46f, 0.975f, 0.5f), IGraphics::CORNER_T, 7.5f);
-		RedScoreboard.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_B, 7.5f);
-		BlueScoreboard.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_B, 7.5f);
 
 		RenderTitleBar(RedTitle, TEAM_RED, pRedTeamName == nullptr ? Localize("Red team") : pRedTeamName);
 		RenderTitleBar(BlueTitle, TEAM_BLUE, pBlueTeamName == nullptr ? Localize("Blue team") : pBlueTeamName, aPlayerCount);
@@ -1280,8 +1312,6 @@ void CScoreboard::OnRender()
 	}
 	else
 	{
-		Scoreboard.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, 0.5f), IGraphics::CORNER_ALL, 7.5f);
-
 		const char *pTitle;
 		if(pGameInfoObj && (pGameInfoObj->m_GameStateFlags & GAMESTATEFLAG_GAMEOVER))
 		{
@@ -1331,7 +1361,6 @@ void CScoreboard::OnRender()
 		}
 	}
 
-	CUIRect Spectators = {(Screen.w - ScoreboardSmallWidth) / 2.0f, Scoreboard.y + Scoreboard.h + 5.0f, ScoreboardSmallWidth, 100.0f};
 	if(pGameInfoObj && (pGameInfoObj->m_ScoreLimit || pGameInfoObj->m_TimeLimit || (pGameInfoObj->m_RoundNum && pGameInfoObj->m_RoundCurrent)))
 	{
 		CUIRect Goals;
@@ -1537,7 +1566,7 @@ CUi::EPopupMenuFunctionResult CScoreboard::CScoreboardPopupContext::Render(void 
 			CServerInfo ServerInfo;
 			pScoreboard->Client()->GetServerInfo(&ServerInfo);
 			const int Community = str_comp(ServerInfo.m_aCommunityId, "kog") == 0 ? 1 :
-											  (str_comp(ServerInfo.m_aCommunityId, "unique") == 0 ? 2 : 0);
+												(str_comp(ServerInfo.m_aCommunityId, "unique") == 0 ? 2 : 0);
 
 			char aCommunityLink[512];
 			char aEncodedName[256];

@@ -2852,6 +2852,17 @@ void CGraphics_Threaded::TakeCustomScreenshot(const char *pFilename)
 	m_DoScreenshot = true;
 }
 
+void CGraphics_Threaded::RenderBackdropBlur(const SBackdropBlurRect *pRects, int NumRects, float CornerRadius)
+{
+	FlushVertices();
+	CCommandBuffer::SCommand_RenderBackdropBlur Cmd;
+	Cmd.m_NumRects = std::clamp(NumRects, 0, 2);
+	for(int i = 0; i < Cmd.m_NumRects; ++i)
+		Cmd.m_aRects[i] = pRects[i];
+	Cmd.m_CornerRadius = CornerRadius;
+	AddCmd(Cmd);
+}
+
 void CGraphics_Threaded::Swap()
 {
 	bool Swapped = false;

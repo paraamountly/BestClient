@@ -519,6 +519,7 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_Shutdown(const SCommand_Shutdown *
 	glDeleteBuffers(1, &m_PrimitiveDrawBufferIdTex3D);
 	glDeleteVertexArrays(1, &m_PrimitiveDrawVertexIdTex3D);
 	DestroyMotionBlurTexture();
+	DestroyBackdropBlur();
 
 	for(int i = 0; i < (int)m_vTextures.size(); ++i)
 	{
@@ -1426,6 +1427,79 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderQuadContainerAsSpriteMultipl
 		RenderOffset += RSPCount;
 		DrawCount -= RSPCount;
 	}
+}
+
+void CCommandProcessorFragment_OpenGL3_3::DestroyBackdropBlur()
+{
+	if(m_BackdropBlurProgram)
+		glDeleteProgram(m_BackdropBlurProgram);
+	if(m_BackdropBlurVao)
+		glDeleteVertexArrays(1, &m_BackdropBlurVao);
+	if(m_BackdropBlurTexture)
+		glDeleteTextures(1, &m_BackdropBlurTexture);
+	m_BackdropBlurProgram = m_BackdropBlurVao = m_BackdropBlurTexture = 0;
+	m_BackdropBlurWidth = m_BackdropBlurHeight = 0;
+}
+
+void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderBackdropBlur(const CCommandBuffer::SCommand_RenderBackdropBlur *pCommand)
+{
+	if(pCommand->m_NumRects <= 0 || m_CanvasWidth == 0 || m_CanvasHeight == 0)
+		return;
+	if(m_BackdropBlurTexture && (m_BackdropBlurWidth != m_CanvasWidth || m_BackdropBlurHeight != m_CanvasHeight))
+		DestroyBackdropBlur();
+	if(!m_BackdropBlurTexture)
+	{
+		m_BackdropBlurWidth = m_CanvasWidth;
+		m_BackdropBlurHeight = m_CanvasHeight;
+		glGenTextures(1, &m_BackdropBlurTexture);
+		glBindTexture(GL_TEXTURE_2D, m_BackdropBlurTexture);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, m_CanvasWidth, m_CanvasHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+
+		const char *pVertex = "#version 330 core\nout vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.-1.,0,1);}";
+		const char *pFragment = "#version 330 core\nin vec2 uv;out vec4 color;uniform sampler2D scene;uniform vec2 size;uniform vec4 rects[2];uniform int count;uniform float radius;float sd(vec2 p,vec2 b,float r){return length(max(abs(p)-b+r,0.))-r;}void main(){vec2 px=uv*size;float mask=0.;for(int i=0;i<count;i++){vec4 q=rects[i];vec2 c=q.xy+q.zw*.5;mask=max(mask,1.-smoothstep(-1.,1.,sd(px-c,q.zw*.5,radius)));}if(mask<=0.)discard;vec2 t=1./size;vec3 v=textureLod(scene,uv,3.).rgb*.20;v+=(textureLod(scene,uv+vec2( t.x*8.,0),3.).rgb+textureLod(scene,uv-vec2(t.x*8.,0),3.).rgb+textureLod(scene,uv+vec2(0,t.y*8.),3.).rgb+textureLod(scene,uv-vec2(0,t.y*8.),3.).rgb)*.12;v+=(textureLod(scene,uv+vec2(t.x*6.,t.y*6.),3.).rgb+textureLod(scene,uv+vec2(-t.x*6.,t.y*6.),3.).rgb+textureLod(scene,uv+vec2(t.x*6.,-t.y*6.),3.).rgb+textureLod(scene,uv-vec2(t.x*6.,t.y*6.),3.).rgb)*.08;color=vec4(v,mask);}";
+		auto Compile = [](GLenum Type, const char *pSource) { GLuint Shader = glCreateShader(Type); glShaderSource(Shader, 1, &pSource, nullptr); glCompileShader(Shader); return Shader; };
+		GLuint Vertex = Compile(GL_VERTEX_SHADER, pVertex), Fragment = Compile(GL_FRAGMENT_SHADER, pFragment);
+		m_BackdropBlurProgram = glCreateProgram();
+		glAttachShader(m_BackdropBlurProgram, Vertex);
+		glAttachShader(m_BackdropBlurProgram, Fragment);
+		glLinkProgram(m_BackdropBlurProgram);
+		glDeleteShader(Vertex);
+		glDeleteShader(Fragment);
+		glGenVertexArrays(1, &m_BackdropBlurVao);
+	}
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, m_BackdropBlurTexture);
+	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_CanvasWidth, m_CanvasHeight);
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glViewport(0, 0, m_CanvasWidth, m_CanvasHeight);
+	glDisable(GL_SCISSOR_TEST);
+	m_LastClipEnable = false;
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glUseProgram(m_BackdropBlurProgram);
+	m_LastProgramId = 0;
+	glUniform1i(glGetUniformLocation(m_BackdropBlurProgram, "scene"), 0);
+	glUniform2f(glGetUniformLocation(m_BackdropBlurProgram, "size"), m_CanvasWidth, m_CanvasHeight);
+	glUniform1i(glGetUniformLocation(m_BackdropBlurProgram, "count"), pCommand->m_NumRects);
+	glUniform1f(glGetUniformLocation(m_BackdropBlurProgram, "radius"), pCommand->m_CornerRadius);
+	for(int i = 0; i < pCommand->m_NumRects; ++i)
+	{
+		char aUniform[16];
+		str_format(aUniform, sizeof(aUniform), "rects[%d]", i);
+		const auto &R = pCommand->m_aRects[i];
+		glUniform4f(glGetUniformLocation(m_BackdropBlurProgram, aUniform), R.m_X, m_CanvasHeight - R.m_Y - R.m_H, R.m_W, R.m_H);
+	}
+	glBindVertexArray(m_BackdropBlurVao);
+	glDrawArrays(GL_TRIANGLES, 0, 3);
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	m_LastBlendMode = EBlendMode::NONE;
 }
 
 void CCommandProcessorFragment_OpenGL3_3::EnsureMotionBlurTexture()

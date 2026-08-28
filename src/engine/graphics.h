@@ -507,7 +507,12 @@ public:
 	 */
 	virtual void ReadPixel(ivec2 Position, ColorRGBA *pColor) = 0;
 	virtual void TakeScreenshot(const char *pFilename) = 0;
+	struct SBackdropBlurRect
+	{
+		float m_X, m_Y, m_W, m_H;
+	};
 	virtual void TakeCustomScreenshot(const char *pFilename) = 0;
+	virtual void RenderBackdropBlur(const SBackdropBlurRect *pRects, int NumRects, float CornerRadius) = 0;
 	virtual int GetVideoModes(CVideoMode *pModes, int MaxModes, int Screen) = 0;
 	virtual void GetCurrentVideoMode(CVideoMode &CurMode, int Screen) = 0;
 	virtual void Swap() = 0;
