@@ -870,10 +870,10 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 				Glow.w += 4.0f;
 				Glow.h += 4.0f;
 				Glow.Draw(ColorRGBA(0.48f, 0.31f, 0.82f, 0.16f), IGraphics::CORNER_ALL, Row.h / 2.0f + 2.0f);
-				Row.Draw(ColorRGBA(0.48f, 0.34f, 0.72f, 0.28f), IGraphics::CORNER_ALL, Row.h / 2.0f);
-				CUIRect LocalBorder = Row;
-				LocalBorder.Margin(0.8f, &LocalBorder);
-				LocalBorder.Draw(ColorRGBA(0.76f, 0.62f, 1.0f, 0.42f), IGraphics::CORNER_ALL, LocalBorder.h / 2.0f);
+				Row.Draw(ColorRGBA(0.76f, 0.62f, 1.0f, 0.42f), IGraphics::CORNER_ALL, Row.h / 2.0f);
+				CUIRect LocalFill = Row;
+				LocalFill.Margin(0.9f, &LocalFill);
+				LocalFill.Draw(ColorRGBA(0.48f, 0.34f, 0.72f, 0.28f), IGraphics::CORNER_ALL, LocalFill.h / 2.0f);
 			}
 
 			const CGameClient::CClientData &ClientData = GameClient()->m_aClients[pInfo->m_ClientId];
@@ -1229,8 +1229,8 @@ void CScoreboard::OnRender()
 	CUIRect Spectators = {(Screen.w - ScoreboardSmallWidth) / 2.0f, Scoreboard.y + Scoreboard.h + 4.0f, ScoreboardSmallWidth, 78.0f};
 
 	// Capture the current game frame once; the OpenGL backend builds and reuses one GPU-blurred texture for both cards.
-	const float PixelX = Graphics()->WindowWidth() / Screen.w;
-	const float PixelY = Graphics()->WindowHeight() / Screen.h;
+	const float PixelX = Graphics()->ScreenWidth() / Screen.w;
+	const float PixelY = Graphics()->ScreenHeight() / Screen.h;
 	const IGraphics::SBackdropBlurRect aBlurRects[] = {
 		{Scoreboard.x * PixelX, Scoreboard.y * PixelY, Scoreboard.w * PixelX, Scoreboard.h * PixelY},
 		{Spectators.x * PixelX, Spectators.y * PixelY, Spectators.w * PixelX, Spectators.h * PixelY}};

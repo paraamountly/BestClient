@@ -1443,6 +1443,12 @@ void CCommandProcessorFragment_OpenGL3_3::DestroyBackdropBlur()
 
 void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderBackdropBlur(const CCommandBuffer::SCommand_RenderBackdropBlur *pCommand)
 {
+#ifdef BACKEND_AS_OPENGL_ES
+	// The desktop shader below uses GLSL 330. OpenGL ES deliberately keeps the
+	// translucent glass fallback instead of attempting to compile that shader.
+	(void)pCommand;
+	return;
+#else
 	if(pCommand->m_NumRects <= 0 || m_CanvasWidth == 0 || m_CanvasHeight == 0)
 		return;
 	if(m_BackdropBlurTexture && (m_BackdropBlurWidth != m_CanvasWidth || m_BackdropBlurHeight != m_CanvasHeight))
@@ -1461,19 +1467,48 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderBackdropBlur(const CCommandB
 
 		const char *pVertex = "#version 330 core\nout vec2 uv;void main(){vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2);uv=p;gl_Position=vec4(p*2.-1.,0,1);}";
 		const char *pFragment = "#version 330 core\nin vec2 uv;out vec4 color;uniform sampler2D scene;uniform vec2 size;uniform vec4 rects[2];uniform int count;uniform float radius;float sd(vec2 p,vec2 b,float r){return length(max(abs(p)-b+r,0.))-r;}void main(){vec2 px=uv*size;float mask=0.;for(int i=0;i<count;i++){vec4 q=rects[i];vec2 c=q.xy+q.zw*.5;mask=max(mask,1.-smoothstep(-1.,1.,sd(px-c,q.zw*.5,radius)));}if(mask<=0.)discard;vec2 t=1./size;vec3 v=textureLod(scene,uv,3.).rgb*.20;v+=(textureLod(scene,uv+vec2( t.x*8.,0),3.).rgb+textureLod(scene,uv-vec2(t.x*8.,0),3.).rgb+textureLod(scene,uv+vec2(0,t.y*8.),3.).rgb+textureLod(scene,uv-vec2(0,t.y*8.),3.).rgb)*.12;v+=(textureLod(scene,uv+vec2(t.x*6.,t.y*6.),3.).rgb+textureLod(scene,uv+vec2(-t.x*6.,t.y*6.),3.).rgb+textureLod(scene,uv+vec2(t.x*6.,-t.y*6.),3.).rgb+textureLod(scene,uv-vec2(t.x*6.,t.y*6.),3.).rgb)*.08;color=vec4(v,mask);}";
-		auto Compile = [](GLenum Type, const char *pSource) { GLuint Shader = glCreateShader(Type); glShaderSource(Shader, 1, &pSource, nullptr); glCompileShader(Shader); return Shader; };
+		auto Compile = [](GLenum Type, const char *pSource) {
+			GLuint Shader = glCreateShader(Type);
+			glShaderSource(Shader, 1, &pSource, nullptr);
+			glCompileShader(Shader);
+			GLint Compiled = GL_FALSE;
+			glGetShaderiv(Shader, GL_COMPILE_STATUS, &Compiled);
+			if(Compiled == GL_FALSE)
+			{
+				glDeleteShader(Shader);
+				return (GLuint)0;
+			}
+			return Shader;
+		};
 		GLuint Vertex = Compile(GL_VERTEX_SHADER, pVertex), Fragment = Compile(GL_FRAGMENT_SHADER, pFragment);
+		if(Vertex == 0 || Fragment == 0)
+		{
+			if(Vertex != 0)
+				glDeleteShader(Vertex);
+			if(Fragment != 0)
+				glDeleteShader(Fragment);
+			DestroyBackdropBlur();
+			return;
+		}
 		m_BackdropBlurProgram = glCreateProgram();
 		glAttachShader(m_BackdropBlurProgram, Vertex);
 		glAttachShader(m_BackdropBlurProgram, Fragment);
 		glLinkProgram(m_BackdropBlurProgram);
+		GLint Linked = GL_FALSE;
+		glGetProgramiv(m_BackdropBlurProgram, GL_LINK_STATUS, &Linked);
 		glDeleteShader(Vertex);
 		glDeleteShader(Fragment);
+		if(Linked == GL_FALSE)
+		{
+			DestroyBackdropBlur();
+			return;
+		}
 		glGenVertexArrays(1, &m_BackdropBlurVao);
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glActiveTexture(GL_TEXTURE0);
+	glBindSampler(0, 0);
 	glBindTexture(GL_TEXTURE_2D, m_BackdropBlurTexture);
 	glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_CanvasWidth, m_CanvasHeight);
 	glGenerateMipmap(GL_TEXTURE_2D);
@@ -1490,16 +1525,15 @@ void CCommandProcessorFragment_OpenGL3_3::Cmd_RenderBackdropBlur(const CCommandB
 	glUniform1f(glGetUniformLocation(m_BackdropBlurProgram, "radius"), pCommand->m_CornerRadius);
 	for(int i = 0; i < pCommand->m_NumRects; ++i)
 	{
-		char aUniform[16];
-		str_format(aUniform, sizeof(aUniform), "rects[%d]", i);
 		const auto &R = pCommand->m_aRects[i];
-		glUniform4f(glGetUniformLocation(m_BackdropBlurProgram, aUniform), R.m_X, m_CanvasHeight - R.m_Y - R.m_H, R.m_W, R.m_H);
+		glUniform4f(glGetUniformLocation(m_BackdropBlurProgram, i == 0 ? "rects[0]" : "rects[1]"), R.m_X, m_CanvasHeight - R.m_Y - R.m_H, R.m_W, R.m_H);
 	}
 	glBindVertexArray(m_BackdropBlurVao);
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 	glBindVertexArray(0);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	m_LastBlendMode = EBlendMode::NONE;
+#endif
 }
 
 void CCommandProcessorFragment_OpenGL3_3::EnsureMotionBlurTexture()
