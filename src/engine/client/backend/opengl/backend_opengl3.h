@@ -79,6 +79,15 @@ protected:
 	void UploadStreamBufferData(EPrimitiveType PrimitiveType, const void *pVertices, size_t VertSize, unsigned int PrimitiveCount, bool AsTex3D = false);
 	void RenderText(const CCommandBuffer::SState &State, int DrawNum, int TextTextureIndex, int TextOutlineTextureIndex, int TextureSize, const ColorRGBA &TextColor, const ColorRGBA &TextOutlineColor);
 
+	TWGLuint m_BackdropBlurTexture = 0;
+	TWGLuint m_BackdropBlurProgram = 0;
+	TWGLuint m_BackdropBlurVao = 0;
+	uint32_t m_BackdropBlurWidth = 0;
+	uint32_t m_BackdropBlurHeight = 0;
+
+	void DestroyBackdropBlur();
+	void Cmd_RenderBackdropBlur(const CCommandBuffer::SCommand_RenderBackdropBlur *pCommand) override;
+
 	TWGLuint m_MotionBlurTexture = 0;
 	uint32_t m_MotionBlurTexWidth = 0;
 	uint32_t m_MotionBlurTexHeight = 0;

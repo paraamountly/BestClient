@@ -350,6 +350,9 @@ Client ID
 Spectators
 == Наблюдатели
 
+Observers
+== Наблюдатели
+
 Game
 == Игра
 

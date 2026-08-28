@@ -131,6 +131,7 @@ public:
 		CMD_CLEAR,
 		CMD_RENDER,
 		CMD_RENDER_TEX3D,
+		CMD_RENDER_BACKDROP_BLUR,
 
 		// opengl 2.0+ commands (some are just emulated and only exist in opengl 3.3+)
 		CMD_CREATE_BUFFER_OBJECT, // create vbo
@@ -237,6 +238,15 @@ public:
 		EPrimitiveType m_PrimType;
 		unsigned m_PrimCount;
 		SVertexTex3DStream *m_pVertices; // you should use the command buffer data to allocate vertices for this command
+	};
+
+	struct SCommand_RenderBackdropBlur : public SCommand
+	{
+		SCommand_RenderBackdropBlur() :
+			SCommand(CMD_RENDER_BACKDROP_BLUR) {}
+		IGraphics::SBackdropBlurRect m_aRects[2];
+		int m_NumRects;
+		float m_CornerRadius;
 	};
 
 	struct SCommand_CreateBufferObject : public SCommand
@@ -1235,6 +1245,7 @@ public:
 	void ReadPixel(ivec2 Position, ColorRGBA *pColor) override;
 	void TakeScreenshot(const char *pFilename) override;
 	void TakeCustomScreenshot(const char *pFilename) override;
+	void RenderBackdropBlur(const SBackdropBlurRect *pRects, int NumRects, float CornerRadius) override;
 	void Swap() override;
 	bool SetVSync(bool State) override;
 	bool SetMultiSampling(uint32_t ReqMultiSamplingCount, uint32_t &MultiSamplingCountBackend) override;
