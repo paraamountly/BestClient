@@ -60,6 +60,41 @@ namespace
 		return {5.0f, 0.10f, 0.0f, 1.0f, 5.0f};
 	}
 
+	ColorRGBA GetPingGaugeColor(int Ping)
+	{
+		struct SPingColorAnchor
+		{
+			int m_Ping;
+			ColorRGBA m_Color;
+		};
+		constexpr std::array<SPingColorAnchor, 8> s_aAnchors = {{
+			{0, ColorRGBA(0.20f, 0.88f, 0.38f, 1.0f)},
+			{50, ColorRGBA(0.20f, 0.88f, 0.38f, 1.0f)},
+			{80, ColorRGBA(0.62f, 0.90f, 0.22f, 1.0f)},
+			{110, ColorRGBA(0.98f, 0.84f, 0.16f, 1.0f)},
+			{150, ColorRGBA(1.00f, 0.60f, 0.12f, 1.0f)},
+			{180, ColorRGBA(0.98f, 0.36f, 0.10f, 1.0f)},
+			{220, ColorRGBA(0.95f, 0.17f, 0.10f, 1.0f)},
+			{250, ColorRGBA(0.90f, 0.07f, 0.11f, 1.0f)},
+		}};
+		const int ClampedPing = maximum(Ping, 0);
+		for(size_t i = 1; i < s_aAnchors.size(); ++i)
+		{
+			if(ClampedPing <= s_aAnchors[i].m_Ping)
+			{
+				const SPingColorAnchor &Left = s_aAnchors[i - 1];
+				const SPingColorAnchor &Right = s_aAnchors[i];
+				const float Mix = (ClampedPing - Left.m_Ping) / (float)(Right.m_Ping - Left.m_Ping);
+				return ColorRGBA(
+					Left.m_Color.r + (Right.m_Color.r - Left.m_Color.r) * Mix,
+					Left.m_Color.g + (Right.m_Color.g - Left.m_Color.g) * Mix,
+					Left.m_Color.b + (Right.m_Color.b - Left.m_Color.b) * Mix,
+					1.0f);
+			}
+		}
+		return s_aAnchors.back().m_Color;
+	}
+
 	void RenderPingGauge(IGraphics *pGraphics, vec2 Center, float Diameter, float Quality, ColorRGBA ActiveColor)
 	{
 		constexpr int NumSegments = 80;
@@ -1124,18 +1159,20 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 
 			// Circular latency gauge. Compact dense rows use a numeric fallback because
 			// a segmented ring would no longer remain legible below this height.
-			const float PingHue = (300.0f - std::clamp(pInfo->m_Latency, 0, 300)) / 1000.0f;
-			const ColorRGBA PingColor = g_Config.m_ClEnablePingColor ? color_cast<ColorRGBA>(ColorHSLA(PingHue, 0.85f, 0.55f)) : ColorRGBA(0.75f, 0.78f, 0.82f, 1.0f);
+			const ColorRGBA PingColor = g_Config.m_ClEnablePingColor ? GetPingGaugeColor(pInfo->m_Latency) : ColorRGBA(0.75f, 0.78f, 0.82f, 1.0f);
 			str_format(aBuf, sizeof(aBuf), "%d", std::clamp(pInfo->m_Latency, 0, 999));
 			TextRender()->TextColor(ColorRGBA(0.96f, 0.97f, 1.0f, TextColor.a));
 			if(Row.h >= 12.0f)
 			{
 				const float PingGaugeSize = minimum(PingLength, Row.h - 2.0f);
-				const vec2 PingCenter = vec2(PingOffset + PingLength / 2.0f, Row.y + Row.h / 2.0f);
+				const CUIRect PingGaugeRect = {PingOffset + (PingLength - PingGaugeSize) / 2.0f, Row.y + (Row.h - PingGaugeSize) / 2.0f, PingGaugeSize, PingGaugeSize};
 				const float PingQuality = std::clamp(1.0f - pInfo->m_Latency / 300.0f, 0.10f, 1.0f);
-				RenderPingGauge(Graphics(), PingCenter, PingGaugeSize, PingQuality, PingColor);
-				const float PingFontSize = minimum(FontSize, PingGaugeSize * 0.50f);
-				TextRender()->Text(PingCenter.x - TextRender()->TextWidth(PingFontSize, aBuf) / 2.0f, PingCenter.y - PingFontSize / 2.0f, PingFontSize, aBuf);
+				RenderPingGauge(Graphics(), PingGaugeRect.Center(), PingGaugeSize, PingQuality, PingColor);
+				float PingFontSize = minimum(FontSize, PingGaugeSize * 0.50f);
+				const float PingTextWidth = TextRender()->TextWidth(PingFontSize, aBuf);
+				if(PingTextWidth > PingGaugeSize * 0.72f)
+					PingFontSize *= PingGaugeSize * 0.72f / PingTextWidth;
+				Ui()->DoLabel(&PingGaugeRect, aBuf, PingFontSize, TEXTALIGN_MC);
 			}
 			else
 			{
@@ -1300,13 +1337,16 @@ void CScoreboard::OnRender()
 	const float VerticalFitScale = GlobalScreen.h * 0.88f / (MainHeight + 4.0f + SpectatorsHeight);
 	const float ScoreboardScale = std::clamp(minimum(UserScale, minimum(HorizontalFitScale, VerticalFitScale)), 0.25f, 2.0f);
 	const CUIRect Screen = {0.0f, 0.0f, GlobalScreen.w / ScoreboardScale, GlobalScreen.h / ScoreboardScale};
+	CUIRect Scoreboard = {(Screen.w - ScoreboardWidth) / 2.0f, Screen.h * 0.12f, ScoreboardWidth, MainHeight};
+	CScoreboardRenderState RenderState{};
+	CUIRect Spectators = {Scoreboard.x, Scoreboard.y + Scoreboard.h + 4.0f, Scoreboard.w, SpectatorsHeight};
 
-	// A short ease-out scale opens the complete glass composition around its
-	// center. Changing the mapped logical viewport keeps every child element and
+	// A short ease-out scale opens the complete glass composition around the exact
+	// center of the main card. Changing the mapped logical viewport keeps every child element and
 	// its mouse hit rectangle on the exact same transform without layout reflow.
 	const float Ease = 1.0f - std::pow(1.0f - m_OpenAnimation, 3.0f);
 	const float PresentationScale = 0.82f + 0.18f * Ease;
-	const vec2 AnimationCenter = vec2(Screen.w / 2.0f, Screen.h * 0.12f + (MainHeight + 4.0f + SpectatorsHeight) / 2.0f);
+	const vec2 AnimationCenter = Scoreboard.Center();
 	const CUIRect MappedScreen = {
 		AnimationCenter.x * (1.0f - 1.0f / PresentationScale),
 		AnimationCenter.y * (1.0f - 1.0f / PresentationScale),
@@ -1316,10 +1356,6 @@ void CScoreboard::OnRender()
 	const vec2 RealMousePos = Ui()->MousePos();
 	const vec2 WindowSize = vec2(Graphics()->WindowWidth(), Graphics()->WindowHeight());
 	Ui()->SetMousePos(MappedScreen.TopLeft() + Ui()->UpdatedMousePos() * vec2(MappedScreen.w, MappedScreen.h) / WindowSize);
-
-	CUIRect Scoreboard = {(Screen.w - ScoreboardWidth) / 2.0f, Screen.h * 0.12f, ScoreboardWidth, MainHeight};
-	CScoreboardRenderState RenderState{};
-	CUIRect Spectators = {Scoreboard.x, Scoreboard.y + Scoreboard.h + 4.0f, Scoreboard.w, SpectatorsHeight};
 
 	// Capture the current game frame once; the OpenGL backend builds and reuses one GPU-blurred texture for both cards.
 	const float PixelX = Graphics()->ScreenWidth() / MappedScreen.w;
