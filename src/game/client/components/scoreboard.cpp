@@ -27,6 +27,7 @@
 #include <game/localization.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <string>
@@ -57,6 +58,35 @@ namespace
 		if(LowScoreboardWidth)
 			return {7.5f, 0.125f, 0.0f, 1.0f, 7.0f};
 		return {5.0f, 0.10f, 0.0f, 1.0f, 5.0f};
+	}
+
+	void RenderPingGauge(IGraphics *pGraphics, vec2 Center, float Diameter, float Quality, ColorRGBA ActiveColor)
+	{
+		constexpr int NumSegments = 28;
+		std::array<IGraphics::CFreeformItem, NumSegments> aSegments;
+		const float OuterRadius = Diameter / 2.0f;
+		const float InnerRadius = maximum(OuterRadius - maximum(1.0f, Diameter * 0.11f), 0.0f);
+		for(int i = 0; i < NumSegments; ++i)
+		{
+			const float Angle0 = -pi / 2.0f + 2.0f * pi * i / NumSegments;
+			const float Angle1 = -pi / 2.0f + 2.0f * pi * (i + 0.78f) / NumSegments;
+			const vec2 Direction0 = vec2(std::cos(Angle0), std::sin(Angle0));
+			const vec2 Direction1 = vec2(std::cos(Angle1), std::sin(Angle1));
+			aSegments[i] = IGraphics::CFreeformItem(
+				Center + Direction0 * OuterRadius,
+				Center + Direction0 * InnerRadius,
+				Center + Direction1 * OuterRadius,
+				Center + Direction1 * InnerRadius);
+		}
+
+		pGraphics->TextureClear();
+		pGraphics->QuadsBegin();
+		pGraphics->SetColor(ColorRGBA(0.72f, 0.75f, 0.80f, 0.20f));
+		pGraphics->QuadsDrawFreeform(aSegments.data(), NumSegments);
+		const int ActiveSegments = std::clamp((int)std::round(Quality * NumSegments), 1, NumSegments);
+		pGraphics->SetColor(ActiveColor.WithAlpha(0.82f));
+		pGraphics->QuadsDrawFreeform(aSegments.data(), ActiveSegments);
+		pGraphics->QuadsEnd();
 	}
 
 	void RenderBestClientIcon(IGraphics *pGraphics, const CUIRect &Rect, bool Developer = false)
@@ -689,9 +719,12 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	const float RoundRadius = Metrics.m_RoundRadius;
 	const float FontSize = Metrics.m_FontSize;
 
-	// Keep a narrow lane for the contained DDTeam badge. TEAM_FLOCK leaves it empty.
+	bool HasDDTeamBadge = false;
+	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByDDTeamScore)
+		HasDDTeamBadge |= pInfo && pInfo->m_Team == Team && GameClient()->m_Teams.Team(pInfo->m_ClientId) != TEAM_FLOCK;
+	constexpr float TeamBadgeExtraWidth = 24.0f;
 	constexpr float TeamBadgeLaneWidth = 39.0f;
-	const float ScoreOffset = Scoreboard.x + 44.0f;
+	const float ScoreOffset = Scoreboard.x + 20.0f + (HasDDTeamBadge ? TeamBadgeExtraWidth : 0.0f);
 	const float ScoreLength = TextRender()->TextWidth(FontSize, UseTime ? "00:00:00" : "99999");
 	const float TeeOffset = ScoreOffset + ScoreLength + 20.0f;
 	const float TeeLength = 60.0f * TeeSizeMod;
@@ -707,7 +740,8 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 	const float PointsLength = ShowPoints ? 50.0f : 0.0f;
 	const float PointsOffset = NameOffset + NameLength + (ShowPoints ? 7.5f : 0.0f);
 	const float ClanOffset = ShowPoints ? (PointsOffset + PointsLength + 7.5f) : (NameOffset + NameLength + 2.5f);
-	const float ClanLength = maximum(CountryOffset - ClanOffset - 2.5f, 1.0f);
+	const float ClanLength = CountryOffset - ClanOffset - 2.5f;
+	dbg_assert(ClanLength > 0.0f, "Scoreboard column geometry must leave positive clan width");
 
 	// render headlines
 	const float HeadlineFontsize = 11.0f;
@@ -1050,20 +1084,26 @@ void CScoreboard::RenderScoreboard(CUIRect Scoreboard, int Team, int CountStart,
 			GameClient()->m_CountryFlags.Render(ClientData.m_Country, ColorRGBA(1.0f, 1.0f, 1.0f, 0.5f),
 				CountryOffset, Row.y + (Spacing + TeeSizeMod * 5.0f) / 2.0f, CountryLength, Row.h - Spacing - TeeSizeMod * 5.0f);
 
-			// Compact circular latency badge. The subtle colored ring remains readable
-			// over both light and dark parts of the blurred game scene.
+			// Circular latency gauge. Compact dense rows use a numeric fallback because
+			// a segmented ring would no longer remain legible below this height.
 			const float PingHue = (300.0f - std::clamp(pInfo->m_Latency, 0, 300)) / 1000.0f;
 			const ColorRGBA PingColor = g_Config.m_ClEnablePingColor ? color_cast<ColorRGBA>(ColorHSLA(PingHue, 0.85f, 0.55f)) : ColorRGBA(0.75f, 0.78f, 0.82f, 1.0f);
-			const float PingBadgeSize = minimum(PingLength, maximum(6.0f, Row.h - 2.0f));
-			CUIRect PingBadge = {PingOffset + (PingLength - PingBadgeSize) / 2.0f, Row.y + (Row.h - PingBadgeSize) / 2.0f, PingBadgeSize, PingBadgeSize};
-			PingBadge.Draw(PingColor.WithAlpha(0.38f), IGraphics::CORNER_ALL, PingBadgeSize / 2.0f);
-			CUIRect PingBadgeInner = PingBadge;
-			PingBadgeInner.Margin(minimum(1.2f, PingBadgeSize * 0.12f), &PingBadgeInner);
-			PingBadgeInner.Draw(ColorRGBA(0.06f, 0.07f, 0.09f, 0.48f), IGraphics::CORNER_ALL, PingBadgeInner.h / 2.0f);
 			str_format(aBuf, sizeof(aBuf), "%d", std::clamp(pInfo->m_Latency, 0, 999));
-			const float PingFontSize = minimum(FontSize, PingBadgeSize * 0.55f);
 			TextRender()->TextColor(ColorRGBA(0.96f, 0.97f, 1.0f, TextColor.a));
-			TextRender()->Text(PingBadge.x + (PingBadge.w - TextRender()->TextWidth(PingFontSize, aBuf)) / 2.0f, PingBadge.y + (PingBadge.h - PingFontSize) / 2.0f, PingFontSize, aBuf);
+			if(Row.h >= 12.0f)
+			{
+				const float PingGaugeSize = minimum(PingLength, Row.h - 2.0f);
+				const vec2 PingCenter = vec2(PingOffset + PingLength / 2.0f, Row.y + Row.h / 2.0f);
+				const float PingQuality = std::clamp(1.0f - pInfo->m_Latency / 300.0f, 0.10f, 1.0f);
+				RenderPingGauge(Graphics(), PingCenter, PingGaugeSize, PingQuality, PingColor);
+				const float PingFontSize = minimum(FontSize, PingGaugeSize * 0.50f);
+				TextRender()->Text(PingCenter.x - TextRender()->TextWidth(PingFontSize, aBuf) / 2.0f, PingCenter.y - PingFontSize / 2.0f, PingFontSize, aBuf);
+			}
+			else
+			{
+				const float PingFontSize = minimum(FontSize, Row.h - 1.0f);
+				TextRender()->Text(PingOffset + (PingLength - TextRender()->TextWidth(PingFontSize, aBuf)) / 2.0f, Row.y + (Row.h - PingFontSize) / 2.0f, PingFontSize, aBuf);
+			}
 			TextRender()->TextColor(TextRender()->DefaultTextColor());
 
 			if(CountRendered == CountEnd)
@@ -1168,8 +1208,15 @@ void CScoreboard::OnRender()
 		NumScoreboardColumns = 3;
 	// Must match PointsLength + gaps in RenderScoreboard: 7.5 + 50 + 7.5 - 2.5 = 62.5
 	const float PointsColumnExtra = 62.5f;
+	bool HasAnyDDTeamBadge = false;
+	for(const CNetObj_PlayerInfo *pInfo : GameClient()->m_Snap.m_apInfoByDDTeamScore)
+		HasAnyDDTeamBadge |= pInfo && pInfo->m_Team != TEAM_SPECTATORS && GameClient()->m_Teams.Team(pInfo->m_ClientId) != TEAM_FLOCK;
+	constexpr float TeamBadgeExtraWidth = 24.0f;
 	const float ScoreboardWidthBase = !Teams && NumPlayers <= 16 ? ScoreboardSmallWidth : 750.0f;
-	const float ScoreboardWidth = ScoreboardWidthBase + (ShowPoints ? NumScoreboardColumns * PointsColumnExtra : 0.0f);
+	// Equal-width multi-column rendering is retained, so when any column needs a
+	// DDTeam lane every column receives the same compensation. This preserves all
+	// original data-column widths and keeps column splitting straightforward.
+	const float ScoreboardWidth = ScoreboardWidthBase + (ShowPoints ? NumScoreboardColumns * PointsColumnExtra : 0.0f) + (HasAnyDDTeamBadge ? NumScoreboardColumns * TeamBadgeExtraWidth : 0.0f);
 	const float TitleHeight = 30.0f;
 	int RowsPerColumn = NumPlayers;
 	if(!Teams && NumPlayers > 16 && NumPlayers <= 24)
