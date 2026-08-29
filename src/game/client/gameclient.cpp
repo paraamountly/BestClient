@@ -3234,8 +3234,7 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 		if(pOther->GetCore().HookedPlayer() == m_Snap.m_LocalClientId ||
 			TeeDistance < CCharacterCore::PhysicalSize() * 2.25f)
 			return false;
-		if(pOther->GetActiveWeapon() == WEAPON_SHOTGUN && (pOther->LatestInput()->m_Fire & 1) != 0 &&
-			TeeDistance <= (float)pOther->GetTuning(pOther->GetOverriddenTuneZone())->m_LaserReach + CCharacterCore::PhysicalSize())
+		if(pOther->CanCreateShotgunImpulseNextTick(pLocal))
 			return false;
 	}
 

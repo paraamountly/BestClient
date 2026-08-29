@@ -494,6 +494,21 @@ void CCharacter::FireWeapon()
 	}
 }
 
+bool CCharacter::CanCreateShotgunImpulseNextTick(const CCharacter *pTarget) const
+{
+	if(!pTarget || !m_pGameWorld->m_WorldConfig.m_PredictWeapons || m_NumInputs < 2 ||
+		m_ReloadTimer != 0 || m_FreezeTime != 0 || !(m_LatestInput.m_Fire & 1))
+		return false;
+	int Weapon = m_Core.m_ActiveWeapon;
+	if(m_QueuedWeapon == WEAPON_SHOTGUN && !m_Core.m_aWeapons[WEAPON_NINJA].m_Got &&
+		m_Core.m_aWeapons[WEAPON_SHOTGUN].m_Got)
+		Weapon = WEAPON_SHOTGUN;
+	if(Weapon != WEAPON_SHOTGUN || !m_Core.m_aWeapons[WEAPON_SHOTGUN].m_Ammo)
+		return false;
+	const float Reach = m_pGameWorld->GetTuning(GetOverriddenTuneZone())->m_LaserReach + CCharacterCore::PhysicalSize();
+	return distance(m_Core.m_Pos, pTarget->Core()->m_Pos) <= Reach;
+}
+
 void CCharacter::HandleWeapons()
 {
 	//ninja
