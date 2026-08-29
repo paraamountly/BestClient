@@ -67,6 +67,7 @@ public:
 		int m_PredictionGeneration = 0;
 		int m_RequestedDirection = 0;
 		int m_Direction = 0;
+		uint64_t m_PhysicsFingerprint = 0;
 	};
 	SSmartInputEventState m_aSmartInputEvent[NUM_DUMMIES];
 	SSmartDecisionCache m_aSmartDecisionCache[NUM_DUMMIES];

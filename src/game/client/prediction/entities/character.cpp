@@ -1155,14 +1155,27 @@ bool CCharacter::TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded)
 	if(IsSpecialDisplacement(CurrentIndex))
 		return false;
 
-	// HandleTiles uses the anti-skip center path after movement. Check both possible
-	// horizontal candidates and the current vertical displacement conservatively.
+	// Jump input is rejected by the caller. Reproduce each of the three legal
+	// horizontal actions, including velocity ramp and a read-only MoveBox collision
+	// probe, so every possible next center path is covered exactly.
 	const float MaxSpeed = Grounded ? (float)Tuning.m_GroundControlSpeed : (float)Tuning.m_AirControlSpeed;
-	const float HorizontalReach = maximum(std::abs(m_Core.m_Vel.x), MaxSpeed) * 2.0f;
-	const float VerticalVelocity = m_Core.m_Vel.y + (float)Tuning.m_Gravity;
-	for(const float HorizontalVelocity : {-HorizontalReach, HorizontalReach})
+	const float Accel = Grounded ? (float)Tuning.m_GroundControlAccel : (float)Tuning.m_AirControlAccel;
+	const float Friction = Grounded ? (float)Tuning.m_GroundFriction : (float)Tuning.m_AirFriction;
+	for(int Direction = -1; Direction <= 1; Direction++)
 	{
-		const vec2 End = m_Core.m_Pos + vec2(HorizontalVelocity, VerticalVelocity);
+		vec2 MoveVelocity(m_Core.m_Vel.x, m_Core.m_Vel.y + (float)Tuning.m_Gravity);
+		if(Direction != 0)
+			MoveVelocity.x = SaturatedAdd(-MaxSpeed, MaxSpeed, MoveVelocity.x, Direction * Accel);
+		else
+			MoveVelocity.x *= Friction;
+		const float Ramp = VelocityRamp(length(MoveVelocity) * 50, Tuning.m_VelrampStart, Tuning.m_VelrampRange, Tuning.m_VelrampCurvature);
+		MoveVelocity.x *= Ramp;
+		const float ExpectedHorizontalVelocity = MoveVelocity.x;
+		vec2 End = m_Core.m_Pos;
+		Collision()->MoveBox(&End, &MoveVelocity, CCharacterCore::PhysicalSizeVec2(),
+			vec2(Tuning.m_GroundElasticityX, Tuning.m_GroundElasticityY));
+		if(std::abs(MoveVelocity.x - ExpectedHorizontalVelocity) > 1.0f / 256.0f)
+			return false;
 		for(const int Index : Collision()->GetMapIndices(m_Core.m_Pos, End))
 			if(IsSpecialDisplacement(Index))
 				return false;

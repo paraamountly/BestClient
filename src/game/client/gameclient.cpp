@@ -3213,6 +3213,9 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	if(Core.m_HookState == HOOK_GRABBED || Core.HookedPlayer() >= 0 || Core.m_ActiveWeapon == WEAPON_NINJA ||
 		Core.m_Jetpack || Core.m_FreezeEnd != 0 || Core.m_LiveFrozen || Core.m_DeepFrozen || Core.m_IsInFreeze)
 		return false;
+	if(m_Controls.m_aInputData[g_Config.m_ClDummy].m_Jump != 0 ||
+		m_Controls.m_aInputData[g_Config.m_ClDummy].m_Hook != 0)
+		return false;
 
 	// Local membership is expected. Only a non-local member represents an external interaction.
 	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
@@ -3239,14 +3242,14 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	for(CProjectile *pProjectile = (CProjectile *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PROJECTILE);
 		pProjectile; pProjectile = (CProjectile *)pProjectile->TypeNext())
 	{
-		const float PreviousTime = (m_PredictedWorld.GameTick() - pProjectile->GetStartTick() - 1) /
-					   (float)m_PredictedWorld.GameTickSpeed();
 		const float CurrentTime = (m_PredictedWorld.GameTick() - pProjectile->GetStartTick()) /
 					  (float)m_PredictedWorld.GameTickSpeed();
-		const vec2 PreviousPos = pProjectile->GetPos(PreviousTime);
+		const float NextTime = (m_PredictedWorld.GameTick() + 1 - pProjectile->GetStartTick()) /
+				       (float)m_PredictedWorld.GameTickSpeed();
 		const vec2 CurrentPos = pProjectile->GetPos(CurrentTime);
-		vec2 ClosestPos = PreviousPos;
-		closest_point_on_line(PreviousPos, CurrentPos, Core.m_Pos, ClosestPos);
+		const vec2 NextPos = pProjectile->GetPos(NextTime);
+		vec2 ClosestPos = CurrentPos;
+		closest_point_on_line(CurrentPos, NextPos, Core.m_Pos, ClosestPos);
 		constexpr float ProjectileInfluenceRadius = 135.0f + CCharacterCore::PhysicalSize();
 		if(distance(ClosestPos, Core.m_Pos) <= ProjectileInfluenceRadius)
 			return false;
@@ -3254,10 +3257,8 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	for(CLaser *pLaser = (CLaser *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_LASER);
 		pLaser; pLaser = (CLaser *)pLaser->TypeNext())
 	{
-		const CCharacter *pOwner = m_PredictedWorld.GetCharacterById(pLaser->GetOwner());
-		const float Reach = pOwner ? (float)m_PredictedWorld.GetTuning(pOwner->GetOverriddenTuneZone())->m_LaserReach :
-					     (float)m_PredictedWorld.GetTuning(0)->m_LaserReach;
-		if(distance(pLaser->GetPos(), Core.m_Pos) <= Reach + CCharacterCore::PhysicalSize())
+		const float Energy = maximum(pLaser->GetEnergy(), 0.0f);
+		if(distance(pLaser->GetPos(), Core.m_Pos) <= Energy + CCharacterCore::PhysicalSize())
 			return false;
 	}
 
@@ -3266,6 +3267,24 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	Context.m_ControlSpeed = Grounded ? NextTuning.m_GroundControlSpeed : NextTuning.m_AirControlSpeed;
 	Context.m_ControlAccel = Grounded ? NextTuning.m_GroundControlAccel : NextTuning.m_AirControlAccel;
 	Context.m_Friction = Grounded ? NextTuning.m_GroundFriction : NextTuning.m_AirFriction;
+	auto Fingerprint = [](uint64_t Hash, uint32_t Value) {
+		return (Hash ^ (uint32_t)Value) * 1099511628211ULL;
+	};
+	auto FloatBits = [](float Value) {
+		uint32_t Bits;
+		mem_copy(&Bits, &Value, sizeof(Bits));
+		return Bits;
+	};
+	uint64_t Hash = 1469598103934665603ULL;
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Pos.x));
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Pos.y));
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Vel.x));
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Vel.y));
+	Hash = Fingerprint(Hash, Grounded ? 1 : 0);
+	Hash = Fingerprint(Hash, FloatBits(Context.m_ControlSpeed));
+	Hash = Fingerprint(Hash, FloatBits(Context.m_ControlAccel));
+	Hash = Fingerprint(Hash, FloatBits(Context.m_Friction));
+	Context.m_PhysicsFingerprint = Hash;
 	return Context.m_ControlSpeed >= 0.0f && Context.m_ControlAccel >= 0.0f && Context.m_Friction >= 0.0f;
 }
 

@@ -561,20 +561,27 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	const bool ContextValid = GameClient()->TryGetGoresSmartStopContext(Context);
 
 	SSmartDecisionCache &Cache = m_aSmartDecisionCache[Dummy];
-	if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
-		Cache.m_DecisionTick == Context.m_DecisionTick &&
-		Cache.m_RequestedDirection == Event.m_RequestedDirection)
-		return Cache.m_Direction;
 	if(!ContextValid)
 	{
+		if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
+			Cache.m_DecisionTick == Context.m_DecisionTick &&
+			Cache.m_RequestedDirection == Event.m_RequestedDirection &&
+			Cache.m_PhysicsFingerprint == 0)
+			return Cache.m_Direction;
 		Cache.m_Valid = true;
 		Cache.m_InputSerial = Event.m_Serial;
 		Cache.m_DecisionTick = Context.m_DecisionTick;
 		Cache.m_PredictionGeneration = Context.m_PredictionGeneration;
 		Cache.m_RequestedDirection = Event.m_RequestedDirection;
 		Cache.m_Direction = ClassicDirection;
+		Cache.m_PhysicsFingerprint = 0;
 		return ClassicDirection;
 	}
+	if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
+		Cache.m_DecisionTick == Context.m_DecisionTick &&
+		Cache.m_RequestedDirection == Event.m_RequestedDirection &&
+		Cache.m_PhysicsFingerprint == Context.m_PhysicsFingerprint)
+		return Cache.m_Direction;
 
 	const float Epsilon = 1.0f / 256.0f;
 	const int Direction = Event.m_RequestedDirection;
@@ -594,6 +601,7 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	Cache.m_PredictionGeneration = Context.m_PredictionGeneration;
 	Cache.m_RequestedDirection = Direction;
 	Cache.m_Direction = Resolved;
+	Cache.m_PhysicsFingerprint = Context.m_PhysicsFingerprint;
 	return Resolved;
 }
 
