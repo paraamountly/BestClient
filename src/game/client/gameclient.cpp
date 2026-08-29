@@ -3372,9 +3372,10 @@ void CGameClient::OnPredict()
 				m_aClients[ClientId].m_aGoresPredTick[BaseTick % 200] = BaseTick;
 				m_aClients[ClientId].m_aGoresPredGeneration[BaseTick % 200] = m_GoresPredictionGeneration;
 				auto &Sample = m_aClients[ClientId].m_aGoresRenderSample[BaseTick % 200];
-				pChar->Core()->Write(&Sample.m_Character);
-				Sample.m_Character.m_AttackTick = pChar->GetAttackTick();
-				Sample.m_Character.m_Weapon = pChar->Core()->m_ActiveWeapon;
+				pChar->Core()->Write(&Sample.m_Core);
+				Sample.m_Core.m_Tick = BaseTick;
+				Sample.m_AttackTick = pChar->GetAttackTick();
+				Sample.m_Weapon = pChar->Core()->m_ActiveWeapon;
 				Sample.m_FreezeEnd = pChar->Core()->m_FreezeEnd;
 				Sample.m_LiveFrozen = pChar->Core()->m_LiveFrozen;
 				Sample.m_DeepFrozen = pChar->Core()->m_DeepFrozen;
@@ -3853,9 +3854,10 @@ void CGameClient::OnPredict()
 					m_aClients[i].m_aGoresPredTick[Tick % 200] = Tick;
 					m_aClients[i].m_aGoresPredGeneration[Tick % 200] = m_GoresPredictionGeneration;
 					auto &Sample = m_aClients[i].m_aGoresRenderSample[Tick % 200];
-					pChar->Core()->Write(&Sample.m_Character);
-					Sample.m_Character.m_AttackTick = pChar->GetAttackTick();
-					Sample.m_Character.m_Weapon = pChar->Core()->m_ActiveWeapon;
+					pChar->Core()->Write(&Sample.m_Core);
+					Sample.m_Core.m_Tick = Tick;
+					Sample.m_AttackTick = pChar->GetAttackTick();
+					Sample.m_Weapon = pChar->Core()->m_ActiveWeapon;
 					Sample.m_FreezeEnd = pChar->Core()->m_FreezeEnd;
 					Sample.m_LiveFrozen = pChar->Core()->m_LiveFrozen;
 					Sample.m_DeepFrozen = pChar->Core()->m_DeepFrozen;
@@ -5573,10 +5575,13 @@ void CGameClient::UpdateRenderedCharacters()
 
 			m_aClients[i].m_IsPredicted = true;
 
-			Pos = mix(
-				vec2(m_aClients[i].m_RenderPrev.m_X, m_aClients[i].m_RenderPrev.m_Y),
-				vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
-				m_aClients[i].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy));
+			if(!ExactGoresSample)
+			{
+				Pos = mix(
+					vec2(m_aClients[i].m_RenderPrev.m_X, m_aClients[i].m_RenderPrev.m_Y),
+					vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
+					Client()->PredIntraGameTick(g_Config.m_ClDummy));
+			}
 
 			if(IsGoresInputMode())
 			{
@@ -6020,8 +6025,14 @@ bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Pre
 		m_aClients[ClientId].m_aGoresPredGeneration[(Tick - 1) % 200] == m_GoresPredictionGeneration &&
 		m_aClients[ClientId].m_aGoresPredGeneration[Tick % 200] == m_GoresPredictionGeneration)
 	{
-		Prev = m_aClients[ClientId].m_aGoresRenderSample[(Tick - 1) % 200].m_Character;
-		Cur = m_aClients[ClientId].m_aGoresRenderSample[Tick % 200].m_Character;
+		const auto &PrevSample = m_aClients[ClientId].m_aGoresRenderSample[(Tick - 1) % 200];
+		const auto &CurSample = m_aClients[ClientId].m_aGoresRenderSample[Tick % 200];
+		static_cast<CNetObj_CharacterCore &>(Prev) = PrevSample.m_Core;
+		static_cast<CNetObj_CharacterCore &>(Cur) = CurSample.m_Core;
+		Prev.m_AttackTick = PrevSample.m_AttackTick;
+		Cur.m_AttackTick = CurSample.m_AttackTick;
+		Prev.m_Weapon = PrevSample.m_Weapon;
+		Cur.m_Weapon = CurSample.m_Weapon;
 		Pos = mix(m_aClients[ClientId].m_aGoresPredPos[(Tick - 1) % 200], m_aClients[ClientId].m_aGoresPredPos[Tick % 200], Intra);
 		return true;
 	}

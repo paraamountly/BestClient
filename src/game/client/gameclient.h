@@ -628,7 +628,9 @@ public:
 		int m_aGoresPredGeneration[200];
 		struct SGoresRenderSample
 		{
-			CNetObj_Character m_Character;
+			CNetObj_CharacterCore m_Core;
+			int m_AttackTick;
+			int m_Weapon;
 			int m_FreezeEnd;
 			bool m_LiveFrozen;
 			bool m_DeepFrozen;
