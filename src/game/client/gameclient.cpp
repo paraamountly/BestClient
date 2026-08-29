@@ -3193,6 +3193,50 @@ bool CGameClient::IsGoresInputMode() const
 	return g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputAmount > 0;
 }
 
+bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
+{
+	Context = {};
+	if(IsGoresInputMode())
+	{
+		Context.m_DecisionTick = Client()->PredGameTick(g_Config.m_ClDummy);
+		Context.m_PredictionGeneration = m_GoresPredictionGeneration;
+	}
+	if(!IsGoresInputMode() || m_Snap.m_LocalClientId < 0 || m_GoresPredictionGeneration <= 0 ||
+		m_GoresLocalFreezeTransition || m_GoresInteractionClientId >= 0)
+		return false;
+
+	CCharacter *pLocal = m_PredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
+	if(!pLocal)
+		return false;
+	const CCharacterCore Core = pLocal->GetCore();
+	if(Core.m_HookState == HOOK_GRABBED || Core.HookedPlayer() >= 0 || Core.m_ActiveWeapon == WEAPON_NINJA ||
+		Core.m_Jetpack || Core.m_FreezeEnd != 0 || Core.m_LiveFrozen || Core.m_DeepFrozen || Core.m_IsInFreeze)
+		return false;
+
+	// Local membership is expected. Only a non-local member represents an external interaction.
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		if(ClientId == m_Snap.m_LocalClientId)
+			continue;
+		if(m_aGoresInteractionGroup[ClientId])
+			return false;
+		CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+		if(!pOther)
+			continue;
+		if(pOther->GetCore().HookedPlayer() == m_Snap.m_LocalClientId ||
+			distance(pOther->GetCore().m_Pos, Core.m_Pos) < CCharacterCore::PhysicalSize() * 2.0f)
+			return false;
+	}
+
+	const bool Grounded = pLocal->IsGrounded();
+	Context.m_VelX = Core.m_Vel.x;
+	Context.m_Grounded = Grounded;
+	Context.m_ControlSpeed = Grounded ? Core.m_Tuning.m_GroundControlSpeed : Core.m_Tuning.m_AirControlSpeed;
+	Context.m_ControlAccel = Grounded ? Core.m_Tuning.m_GroundControlAccel : Core.m_Tuning.m_AirControlAccel;
+	Context.m_Friction = Grounded ? Core.m_Tuning.m_GroundFriction : Core.m_Tuning.m_AirFriction;
+	return Context.m_ControlSpeed >= 0.0f && Context.m_ControlAccel >= 0.0f && Context.m_Friction >= 0.0f;
+}
+
 bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
 {
 	if(!g_Config.m_ClAntiPingPreInput || ClientId < 0 || ClientId >= MAX_CLIENTS || Tick <= 0)

@@ -14,6 +14,7 @@
 #include <game/client/components/camera.h>
 #include <game/client/gameclient.h>
 #include <game/collision.h>
+#include <game/gamecore.h>
 
 CControls::CControls()
 {
@@ -57,6 +58,8 @@ void CControls::ResetInput(int Dummy)
 	m_aSnapTapLastPressedTime[Dummy] = 0;
 	m_aSnapTapPrevLeft[Dummy] = 0;
 	m_aSnapTapPrevRight[Dummy] = 0;
+	m_aSmartInputEvent[Dummy] = {};
+	m_aSmartDecisionCache[Dummy] = {};
 }
 
 void CControls::OnPlayerDeath()
@@ -69,6 +72,7 @@ struct CInputState
 {
 	CControls *m_pControls;
 	int *m_apVariables[NUM_DUMMIES];
+	int m_Direction = 0;
 };
 
 void CControls::ConKeyInputState(IConsole::IResult *pResult, void *pUserData)
@@ -81,7 +85,11 @@ void CControls::ConKeyInputState(IConsole::IResult *pResult, void *pUserData)
 	if(pState->m_pControls->GameClient()->m_GameInfo.m_BugDDRaceInput && pState->m_pControls->GameClient()->m_Snap.m_SpecInfo.m_Active)
 		return;
 
-	*pState->m_apVariables[g_Config.m_ClDummy] = pResult->GetInteger(0);
+	const int Dummy = g_Config.m_ClDummy;
+	const bool Held = pResult->GetInteger(0) != 0;
+	*pState->m_apVariables[Dummy] = Held;
+	if(pState->m_Direction != 0)
+		pState->m_pControls->UpdateSmartInputEvent(Dummy, pState->m_Direction, Held);
 }
 
 void CControls::ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData)
@@ -127,11 +135,11 @@ void CControls::OnConsoleInit()
 {
 	// game commands
 	{
-		static CInputState s_State = {this, {&m_aInputDirectionLeft[0], &m_aInputDirectionLeft[1]}};
+		static CInputState s_State = {this, {&m_aInputDirectionLeft[0], &m_aInputDirectionLeft[1]}, -1};
 		Console()->Register("+left", "", CFGFLAG_CLIENT, ConKeyInputState, &s_State, "Move left");
 	}
 	{
-		static CInputState s_State = {this, {&m_aInputDirectionRight[0], &m_aInputDirectionRight[1]}};
+		static CInputState s_State = {this, {&m_aInputDirectionRight[0], &m_aInputDirectionRight[1]}, 1};
 		Console()->Register("+right", "", CFGFLAG_CLIENT, ConKeyInputState, &s_State, "Move right");
 	}
 	{
@@ -499,7 +507,94 @@ bool CControls::OnCursorMove(float x, float y, IInput::ECursorType CursorType)
 bool CControls::IsSnapTapActive() const
 {
 	return g_Config.m_BcSnapTap != 0 &&
-		!GameClient()->IsSnapTapBlockedByCommunity();
+	       !GameClient()->IsSnapTapBlockedByCommunity();
+}
+
+bool CControls::IsSmartStopActive() const
+{
+	return IsSnapTapActive() && g_Config.m_BcSnapTapSmartStop != 0 &&
+	       g_Config.m_BcInputs == BC_INPUTS_GORES && GameClient()->IsGoresInputMode();
+}
+
+void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
+{
+	SSmartInputEventState &State = m_aSmartInputEvent[Dummy];
+	bool &Current = Direction < 0 ? State.m_LeftHeld : State.m_RightHeld;
+	if(Current == Held)
+		return;
+
+	const bool OtherHeld = Direction < 0 ? State.m_RightHeld : State.m_LeftHeld;
+	const bool WasOnlyOtherHeld = OtherHeld && !Current;
+	Current = Held;
+	State.m_Serial++;
+	if(Held)
+	{
+		State.m_LatestPressedDirection = Direction;
+		if(WasOnlyOtherHeld && IsSmartStopActive() && m_aSnapTapAppliedDirection[Dummy] == -Direction)
+		{
+			State.m_ArmSerial = State.m_Serial;
+			State.m_RequestedDirection = Direction;
+		}
+	}
+
+	// A release never creates ownership. It only cancels an in-flight brake when either
+	// participant is no longer held; a later genuine opposite press can arm a new one.
+	if(!State.m_LeftHeld || !State.m_RightHeld)
+	{
+		State.m_ArmSerial = 0;
+		State.m_RequestedDirection = 0;
+	}
+	m_aSmartDecisionCache[Dummy].m_Valid = false;
+}
+
+int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed, int ClassicDirection)
+{
+	const SSmartInputEventState &Event = m_aSmartInputEvent[Dummy];
+	if(!LeftPressed && !RightPressed)
+		return 0;
+	if(LeftPressed != RightPressed)
+		return LeftPressed ? -1 : 1;
+	if(Event.m_ArmSerial == 0 || Event.m_RequestedDirection == 0)
+		return ClassicDirection;
+
+	CGameClient::SGoresSmartStopContext Context;
+	const bool ContextValid = GameClient()->TryGetGoresSmartStopContext(Context);
+
+	SSmartDecisionCache &Cache = m_aSmartDecisionCache[Dummy];
+	if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
+		Cache.m_DecisionTick == Context.m_DecisionTick &&
+		Cache.m_RequestedDirection == Event.m_RequestedDirection)
+		return Cache.m_Direction;
+	if(!ContextValid)
+	{
+		Cache.m_Valid = true;
+		Cache.m_InputSerial = Event.m_Serial;
+		Cache.m_DecisionTick = Context.m_DecisionTick;
+		Cache.m_PredictionGeneration = Context.m_PredictionGeneration;
+		Cache.m_RequestedDirection = Event.m_RequestedDirection;
+		Cache.m_Direction = ClassicDirection;
+		return ClassicDirection;
+	}
+
+	const float Epsilon = 1.0f / 256.0f;
+	const int Direction = Event.m_RequestedDirection;
+	const float Velocity = Context.m_VelX;
+	const float NeutralVelocity = Velocity * Context.m_Friction;
+	const float NewVelocity = SaturatedAdd(-Context.m_ControlSpeed, Context.m_ControlSpeed,
+		Velocity, Direction * Context.m_ControlAccel);
+
+	int Resolved = Direction;
+	if(std::abs(Velocity) > Epsilon && Velocity * Direction < 0.0f && NewVelocity * Direction < -Epsilon &&
+		std::abs(NeutralVelocity) + Epsilon < std::abs(NewVelocity))
+		Resolved = 0;
+
+	Cache.m_Valid = true;
+	Cache.m_InputSerial = Event.m_Serial;
+	Cache.m_DecisionTick = Context.m_DecisionTick;
+	Cache.m_PredictionGeneration = Context.m_PredictionGeneration;
+	Cache.m_RequestedDirection = Direction;
+	Cache.m_Direction = Resolved;
+	return Resolved;
 }
 
 bool CControls::UseGammaInputMovement() const
@@ -535,7 +630,12 @@ int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightP
 		UpdateSnapTapState(Dummy, LeftPressed, RightPressed);
 
 	if(IsSnapTapActive() || !UseGammaInputMovement())
-		return ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
+	{
+		const int ClassicDirection = ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
+		if(IsSmartStopActive())
+			return ResolveSmartStopDirection(Dummy, LeftPressed, RightPressed, ClassicDirection);
+		return ClassicDirection;
+	}
 
 	int Direction = 0;
 	if(LeftPressed && !RightPressed)
