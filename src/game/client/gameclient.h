@@ -626,10 +626,17 @@ public:
 		vec2 m_aGoresPredPos[200];
 		int m_aGoresPredTick[200];
 		int m_aGoresPredGeneration[200];
-		CCharacterCore m_GoresRenderPrev;
-		CCharacterCore m_GoresRenderCur;
-		int m_GoresRenderGeneration = 0;
-		bool m_GoresRenderValid = false;
+		struct SGoresRenderSample
+		{
+			CNetObj_Character m_Character;
+			int m_FreezeEnd;
+			bool m_LiveFrozen;
+			bool m_DeepFrozen;
+			bool m_Invincible;
+		} m_aGoresRenderSample[200];
+		float m_GoresRenderIntra = 0.0f;
+		int m_GoresRenderTick = 0;
+		bool m_GoresRenderSampleValid = false;
 		struct SGoresPredictionState
 		{
 			float m_InputConfidence = 0.0f;
@@ -1104,6 +1111,7 @@ public:
 	vec2 GetFreezePos(int ClientId);
 	vec2 GetFastInputPos(int ClientId);
 	vec2 GetGoresInputPos(int ClientId);
+	float RenderIntra(int ClientId) const;
 	vec2 BcGetCursorWorldPos() const;
 
 	int m_MultiViewTeam;
@@ -1141,8 +1149,9 @@ private:
 	void UpdatePrediction();
 	void UpdateSpectatorCursor();
 	void UpdateRenderedCharacters();
+	float GetGoresDisplayHorizon(int ClientId) const;
+	bool ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra) const;
 	void HandlePredictedEvents(int Tick);
-
 
 	// BestClient: optimizer
 	void RenderOptimizerFpsFogRect();
