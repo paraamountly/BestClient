@@ -78,6 +78,18 @@ void CPlasma::Tick()
 	HitObstacle(pTarget);
 }
 
+bool CPlasma::CanAffectCharacterNextTick(const CCharacter *pCharacter)
+{
+	if(!pCharacter || m_LifeTime == 0)
+		return false;
+	const vec2 NextPos = m_Pos + m_Core;
+	const vec2 NextCore = m_Core * PLASMA_ACCEL;
+	vec2 Closest = NextPos;
+	closest_point_on_line(NextPos, NextPos + NextCore, pCharacter->Core()->m_Pos, Closest);
+	const float Radius = m_Explosive ? 135.0f + CCharacterCore::PhysicalSize() : CCharacterCore::PhysicalSize();
+	return distance(Closest, pCharacter->Core()->m_Pos) <= Radius;
+}
+
 void CPlasma::Move()
 {
 	m_Pos += m_Core;

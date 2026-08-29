@@ -1177,8 +1177,18 @@ bool CCharacter::TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded)
 		if(std::abs(MoveVelocity.x - ExpectedHorizontalVelocity) > 1.0f / 256.0f)
 			return false;
 		for(const int Index : Collision()->GetMapIndices(m_Core.m_Pos, End))
-			if(IsSpecialDisplacement(Index))
+		{
+			if(IsSpecialDisplacement(Index) ||
+				Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, End, 18.0f, Index) != 0)
 				return false;
+			CDoorTile DoorTile;
+			Collision()->GetDoorTile(Index, &DoorTile);
+			if(DoorTile.m_Index != 0)
+				return false;
+		}
+		const int EndIndex = Collision()->GetMapIndex(End);
+		if(Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, End, 18.0f, EndIndex) != 0)
+			return false;
 	}
 	return true;
 }

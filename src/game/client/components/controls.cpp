@@ -563,18 +563,7 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	SSmartDecisionCache &Cache = m_aSmartDecisionCache[Dummy];
 	if(!ContextValid)
 	{
-		if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
-			Cache.m_DecisionTick == Context.m_DecisionTick &&
-			Cache.m_RequestedDirection == Event.m_RequestedDirection &&
-			Cache.m_PhysicsFingerprint == 0)
-			return Cache.m_Direction;
-		Cache.m_Valid = true;
-		Cache.m_InputSerial = Event.m_Serial;
-		Cache.m_DecisionTick = Context.m_DecisionTick;
-		Cache.m_PredictionGeneration = Context.m_PredictionGeneration;
-		Cache.m_RequestedDirection = Event.m_RequestedDirection;
-		Cache.m_Direction = ClassicDirection;
-		Cache.m_PhysicsFingerprint = 0;
+		Cache.m_Valid = false;
 		return ClassicDirection;
 	}
 	if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&

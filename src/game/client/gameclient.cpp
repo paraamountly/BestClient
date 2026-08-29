@@ -42,7 +42,10 @@
 #include "components/voting.h"
 #include "lineinput.h"
 #include "prediction/entities/character.h"
+#include "prediction/entities/dragger.h"
 #include "prediction/entities/laser.h"
+#include "prediction/entities/pickup.h"
+#include "prediction/entities/plasma.h"
 #include "prediction/entities/projectile.h"
 #include "race.h"
 #include "render.h"
@@ -3227,8 +3230,12 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 		CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
 		if(!pOther)
 			continue;
+		const float TeeDistance = distance(pOther->GetCore().m_Pos, Core.m_Pos);
 		if(pOther->GetCore().HookedPlayer() == m_Snap.m_LocalClientId ||
-			distance(pOther->GetCore().m_Pos, Core.m_Pos) < CCharacterCore::PhysicalSize() * 2.0f)
+			TeeDistance < CCharacterCore::PhysicalSize() * 2.25f)
+			return false;
+		if(pOther->GetActiveWeapon() == WEAPON_SHOTGUN && (pOther->LatestInput()->m_Fire & 1) != 0 &&
+			TeeDistance <= (float)pOther->GetTuning(pOther->GetOverriddenTuneZone())->m_LaserReach + CCharacterCore::PhysicalSize())
 			return false;
 	}
 
@@ -3261,6 +3268,18 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 		if(distance(pLaser->GetPos(), Core.m_Pos) <= Energy + CCharacterCore::PhysicalSize())
 			return false;
 	}
+	for(CDragger *pDragger = (CDragger *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_DRAGGER);
+		pDragger; pDragger = (CDragger *)pDragger->TypeNext())
+		if(pDragger->CanAffectCharacterNextTick(pLocal))
+			return false;
+	for(CPlasma *pPlasma = (CPlasma *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PLASMA);
+		pPlasma; pPlasma = (CPlasma *)pPlasma->TypeNext())
+		if(pPlasma->CanAffectCharacterNextTick(pLocal))
+			return false;
+	for(CPickup *pPickup = (CPickup *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PICKUP);
+		pPickup; pPickup = (CPickup *)pPickup->TypeNext())
+		if(pPickup->CanAffectCharacterNextTick(pLocal))
+			return false;
 
 	Context.m_VelX = Core.m_Vel.x;
 	Context.m_Grounded = Grounded;
