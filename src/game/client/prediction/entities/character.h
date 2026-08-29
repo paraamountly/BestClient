@@ -126,6 +126,7 @@ public:
 	void SetTuneZone(int Zone);
 	int GetOverriddenTuneZone() const;
 	int GetPureTuneZone() const;
+	bool TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded);
 
 	bool HammerHitDisabled() const { return m_Core.m_HammerHitDisabled; }
 	bool ShotgunHitDisabled() const { return m_Core.m_ShotgunHitDisabled; }

@@ -42,6 +42,7 @@
 #include "components/voting.h"
 #include "lineinput.h"
 #include "prediction/entities/character.h"
+#include "prediction/entities/laser.h"
 #include "prediction/entities/projectile.h"
 #include "race.h"
 #include "render.h"
@@ -3228,12 +3229,43 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 			return false;
 	}
 
-	const bool Grounded = pLocal->IsGrounded();
+	CTuningParams NextTuning;
+	bool Grounded;
+	if(!pLocal->TryGetSmartStopPhysics(NextTuning, Grounded))
+		return false;
+
+	// Any projectile close enough to enter the explosion influence radius during
+	// its next predicted segment makes the analytical horizontal model uncertain.
+	for(CProjectile *pProjectile = (CProjectile *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PROJECTILE);
+		pProjectile; pProjectile = (CProjectile *)pProjectile->TypeNext())
+	{
+		const float PreviousTime = (m_PredictedWorld.GameTick() - pProjectile->GetStartTick() - 1) /
+					   (float)m_PredictedWorld.GameTickSpeed();
+		const float CurrentTime = (m_PredictedWorld.GameTick() - pProjectile->GetStartTick()) /
+					  (float)m_PredictedWorld.GameTickSpeed();
+		const vec2 PreviousPos = pProjectile->GetPos(PreviousTime);
+		const vec2 CurrentPos = pProjectile->GetPos(CurrentTime);
+		vec2 ClosestPos = PreviousPos;
+		closest_point_on_line(PreviousPos, CurrentPos, Core.m_Pos, ClosestPos);
+		constexpr float ProjectileInfluenceRadius = 135.0f + CCharacterCore::PhysicalSize();
+		if(distance(ClosestPos, Core.m_Pos) <= ProjectileInfluenceRadius)
+			return false;
+	}
+	for(CLaser *pLaser = (CLaser *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_LASER);
+		pLaser; pLaser = (CLaser *)pLaser->TypeNext())
+	{
+		const CCharacter *pOwner = m_PredictedWorld.GetCharacterById(pLaser->GetOwner());
+		const float Reach = pOwner ? (float)m_PredictedWorld.GetTuning(pOwner->GetOverriddenTuneZone())->m_LaserReach :
+					     (float)m_PredictedWorld.GetTuning(0)->m_LaserReach;
+		if(distance(pLaser->GetPos(), Core.m_Pos) <= Reach + CCharacterCore::PhysicalSize())
+			return false;
+	}
+
 	Context.m_VelX = Core.m_Vel.x;
 	Context.m_Grounded = Grounded;
-	Context.m_ControlSpeed = Grounded ? Core.m_Tuning.m_GroundControlSpeed : Core.m_Tuning.m_AirControlSpeed;
-	Context.m_ControlAccel = Grounded ? Core.m_Tuning.m_GroundControlAccel : Core.m_Tuning.m_AirControlAccel;
-	Context.m_Friction = Grounded ? Core.m_Tuning.m_GroundFriction : Core.m_Tuning.m_AirFriction;
+	Context.m_ControlSpeed = Grounded ? NextTuning.m_GroundControlSpeed : NextTuning.m_AirControlSpeed;
+	Context.m_ControlAccel = Grounded ? NextTuning.m_GroundControlAccel : NextTuning.m_AirControlAccel;
+	Context.m_Friction = Grounded ? NextTuning.m_GroundFriction : NextTuning.m_AirFriction;
 	return Context.m_ControlSpeed >= 0.0f && Context.m_ControlAccel >= 0.0f && Context.m_Friction >= 0.0f;
 }
 

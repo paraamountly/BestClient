@@ -1129,6 +1129,47 @@ void CCharacter::HandleTuneLayer()
 	m_Core.m_Tuning = *GetTuning(GetOverriddenTuneZone());
 }
 
+bool CCharacter::TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded)
+{
+	const int CurrentIndex = Collision()->GetMapIndex(m_Core.m_Pos);
+	const int MoveRestrictions = Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, m_Core.m_Pos, 18.0f, CurrentIndex);
+	if(MoveRestrictions != 0)
+		return false;
+
+	const int PositionTuneZone = GameWorld()->m_WorldConfig.m_UseTuneZones ? Collision()->IsTune(CurrentIndex) : 0;
+	const int EffectiveTuneZone = m_TuneZoneOverride == TuneZone::OVERRIDE_NONE ? PositionTuneZone : m_TuneZoneOverride;
+	Tuning = *GetTuning(EffectiveTuneZone);
+
+	// This is deliberately identical to CCharacterCore::Tick's ground test. In
+	// particular, stopper support is not treated as physical ground.
+	Grounded = Collision()->CheckPoint(m_Core.m_Pos.x + CCharacterCore::PhysicalSize() / 2,
+			   m_Core.m_Pos.y + CCharacterCore::PhysicalSize() / 2 + 5) ||
+		   Collision()->CheckPoint(m_Core.m_Pos.x - CCharacterCore::PhysicalSize() / 2,
+			   m_Core.m_Pos.y + CCharacterCore::PhysicalSize() / 2 + 5);
+
+	auto IsSpecialDisplacement = [this](int Index) {
+		return Collision()->IsSpeedup(Index) || Collision()->IsTeleport(Index) ||
+		       Collision()->IsEvilTeleport(Index) || Collision()->IsCheckTeleport(Index) ||
+		       Collision()->IsCheckEvilTeleport(Index) || Collision()->IsTeleCheckpoint(Index);
+	};
+	if(IsSpecialDisplacement(CurrentIndex))
+		return false;
+
+	// HandleTiles uses the anti-skip center path after movement. Check both possible
+	// horizontal candidates and the current vertical displacement conservatively.
+	const float MaxSpeed = Grounded ? (float)Tuning.m_GroundControlSpeed : (float)Tuning.m_AirControlSpeed;
+	const float HorizontalReach = maximum(std::abs(m_Core.m_Vel.x), MaxSpeed) * 2.0f;
+	const float VerticalVelocity = m_Core.m_Vel.y + (float)Tuning.m_Gravity;
+	for(const float HorizontalVelocity : {-HorizontalReach, HorizontalReach})
+	{
+		const vec2 End = m_Core.m_Pos + vec2(HorizontalVelocity, VerticalVelocity);
+		for(const int Index : Collision()->GetMapIndices(m_Core.m_Pos, End))
+			if(IsSpecialDisplacement(Index))
+				return false;
+	}
+	return true;
+}
+
 void CCharacter::DDRaceTick()
 {
 	mem_copy(&m_Input, &m_SavedInput, sizeof(m_Input));
