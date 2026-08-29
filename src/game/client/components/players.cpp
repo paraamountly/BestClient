@@ -303,7 +303,7 @@ void CPlayers::RenderHookCollLine(
 	if(!AlwaysRenderHookColl && !RenderHookCollPlayer)
 		return;
 
-	float Intra = GameClient()->m_aClients[ClientId].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy);
+	float Intra = GameClient()->RenderIntra(ClientId);
 	float Angle = GetPlayerTargetAngle(&Prev, &Player, ClientId, Intra);
 
 	vec2 Direction = direction(Angle);
@@ -576,7 +576,7 @@ void CPlayers::RenderHook(
 		return;
 
 	if(ClientId >= 0)
-		Intra = GameClient()->m_aClients[ClientId].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy);
+		Intra = GameClient()->RenderIntra(ClientId);
 
 	bool OtherTeam = GameClient()->IsOtherTeam(ClientId);
 	float Alpha = (OtherTeam || ClientId < 0) ? g_Config.m_ClShowOthersAlpha / 100.0f : 1.0f;
@@ -707,14 +707,26 @@ void CPlayers::RenderPlayer(
 	RenderInfo.m_Size = TeeRenderSize(GameClient(), ClientId);
 
 	if(ClientId >= 0)
-		Intra = GameClient()->m_aClients[ClientId].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy);
+		Intra = GameClient()->RenderIntra(ClientId);
 
 	static float s_LastGameTickTime = Client()->GameTickTime(g_Config.m_ClDummy);
 	static float s_LastPredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	static int s_aLastGoresRenderTick[MAX_CLIENTS] = {};
+	static float s_aLastGoresRenderIntra[MAX_CLIENTS] = {};
+	if(in_range(ClientId, MAX_CLIENTS - 1) && GameClient()->m_aClients[ClientId].m_GoresRenderSampleValid && s_aLastGoresRenderTick[ClientId] == 0)
+	{
+		s_aLastGoresRenderTick[ClientId] = GameClient()->m_aClients[ClientId].m_GoresRenderTick;
+		s_aLastGoresRenderIntra[ClientId] = Intra;
+	}
 	if(GameClient()->m_Snap.m_pGameInfoObj && !(GameClient()->m_Snap.m_pGameInfoObj->m_GameStateFlags & GAMESTATEFLAG_PAUSED))
 	{
 		s_LastGameTickTime = Client()->GameTickTime(g_Config.m_ClDummy);
 		s_LastPredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+		if(in_range(ClientId, MAX_CLIENTS - 1) && GameClient()->m_aClients[ClientId].m_GoresRenderSampleValid)
+		{
+			s_aLastGoresRenderTick[ClientId] = GameClient()->m_aClients[ClientId].m_GoresRenderTick;
+			s_aLastGoresRenderIntra[ClientId] = Intra;
+		}
 	}
 
 	bool PredictLocalWeapons = false;
@@ -723,8 +735,12 @@ void CPlayers::RenderPlayer(
 	if(ClientId >= 0 && GameClient()->m_aClients[ClientId].m_IsPredictedLocal && GameClient()->AntiPingGunfire())
 	{
 		PredictLocalWeapons = true;
-		AttackTime = (Client()->PredIntraGameTick(g_Config.m_ClDummy) + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
-		LastAttackTime = (s_LastPredIntraTick + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
+		const bool ExactGoresSample = GameClient()->m_aClients[ClientId].m_GoresRenderSampleValid;
+		const int RenderTick = ExactGoresSample ? GameClient()->m_aClients[ClientId].m_GoresRenderTick : Client()->PredGameTick(g_Config.m_ClDummy);
+		AttackTime = (Intra + (RenderTick - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
+		LastAttackTime = ExactGoresSample ?
+					 (s_aLastGoresRenderIntra[ClientId] + (s_aLastGoresRenderTick[ClientId] - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed() :
+					 (s_LastPredIntraTick + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)Client()->GameTickSpeed();
 	}
 	float AttackTicksPassed = AttackTime * (float)Client()->GameTickSpeed();
 
@@ -1250,14 +1266,26 @@ void CPlayers::RenderPlayerGhost(
 
 	float IntraTick = Intra;
 	if(ClientId >= 0)
-		IntraTick = GameClient()->m_aClients[ClientId].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy);
+		IntraTick = GameClient()->RenderIntra(ClientId);
 
 	static float s_LastGameTickTime = Client()->GameTickTime(g_Config.m_ClDummy);
 	static float s_LastPredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	static int s_aLastGoresRenderTick[MAX_CLIENTS] = {};
+	static float s_aLastGoresRenderIntra[MAX_CLIENTS] = {};
+	if(in_range(ClientId, MAX_CLIENTS - 1) && GameClient()->m_aClients[ClientId].m_GoresRenderSampleValid && s_aLastGoresRenderTick[ClientId] == 0)
+	{
+		s_aLastGoresRenderTick[ClientId] = GameClient()->m_aClients[ClientId].m_GoresRenderTick;
+		s_aLastGoresRenderIntra[ClientId] = IntraTick;
+	}
 	if(GameClient()->m_Snap.m_pGameInfoObj && !(GameClient()->m_Snap.m_pGameInfoObj->m_GameStateFlags & GAMESTATEFLAG_PAUSED))
 	{
 		s_LastGameTickTime = Client()->GameTickTime(g_Config.m_ClDummy);
 		s_LastPredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+		if(in_range(ClientId, MAX_CLIENTS - 1) && GameClient()->m_aClients[ClientId].m_GoresRenderSampleValid)
+		{
+			s_aLastGoresRenderTick[ClientId] = GameClient()->m_aClients[ClientId].m_GoresRenderTick;
+			s_aLastGoresRenderIntra[ClientId] = IntraTick;
+		}
 	}
 
 	bool PredictLocalWeapons = false;
@@ -1266,8 +1294,12 @@ void CPlayers::RenderPlayerGhost(
 	if(ClientId >= 0 && GameClient()->m_aClients[ClientId].m_IsPredictedLocal && GameClient()->AntiPingGunfire())
 	{
 		PredictLocalWeapons = true;
-		AttackTime = (Client()->PredIntraGameTick(g_Config.m_ClDummy) + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)SERVER_TICK_SPEED;
-		LastAttackTime = (s_LastPredIntraTick + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)SERVER_TICK_SPEED;
+		const bool ExactGoresSample = GameClient()->m_aClients[ClientId].m_GoresRenderSampleValid;
+		const int RenderTick = ExactGoresSample ? GameClient()->m_aClients[ClientId].m_GoresRenderTick : Client()->PredGameTick(g_Config.m_ClDummy);
+		AttackTime = (IntraTick + (RenderTick - 1 - Player.m_AttackTick)) / (float)SERVER_TICK_SPEED;
+		LastAttackTime = ExactGoresSample ?
+					 (s_aLastGoresRenderIntra[ClientId] + (s_aLastGoresRenderTick[ClientId] - 1 - Player.m_AttackTick)) / (float)SERVER_TICK_SPEED :
+					 (s_LastPredIntraTick + (Client()->PredGameTick(g_Config.m_ClDummy) - 1 - Player.m_AttackTick)) / (float)SERVER_TICK_SPEED;
 	}
 	float AttackTicksPassed = AttackTime * (float)SERVER_TICK_SPEED;
 
@@ -1808,19 +1840,24 @@ void CPlayers::OnRender()
 		bool Frozen = false;
 		const bool PracticeParticipant = GameClient()->m_FastPractice.Active() && GameClient()->m_FastPractice.IsPracticeParticipant(i);
 		const bool UsesPredictedFreezeState = i == GameClient()->m_aLocalIds[0] || i == GameClient()->m_aLocalIds[1] || PracticeParticipant;
-		if(UsesPredictedFreezeState)
+		if(UsesPredictedFreezeState || GameClient()->m_aClients[i].m_GoresRenderSampleValid)
 		{
-			if(GameClient()->m_aClients[i].m_Predicted.m_FreezeEnd != 0)
+			const auto &ClientData = GameClient()->m_aClients[i];
+			const auto &GoresSample = ClientData.m_aGoresRenderSample[ClientData.m_GoresRenderTick % 200];
+			const int FreezeEnd = ClientData.m_GoresRenderSampleValid ? GoresSample.m_FreezeEnd : ClientData.m_Predicted.m_FreezeEnd;
+			const bool LiveFrozenAtDisplay = ClientData.m_GoresRenderSampleValid ? GoresSample.m_LiveFrozen : ClientData.m_Predicted.m_LiveFrozen;
+			const bool InvincibleAtDisplay = ClientData.m_GoresRenderSampleValid ? GoresSample.m_Invincible : ClientData.m_Predicted.m_Invincible;
+			if(FreezeEnd != 0)
 				aRenderInfo[i].m_TeeRenderFlags |= TEE_EFFECT_FROZEN | TEE_NO_WEAPON;
-			if(GameClient()->m_aClients[i].m_Predicted.m_LiveFrozen)
+			if(LiveFrozenAtDisplay)
 				aRenderInfo[i].m_TeeRenderFlags |= TEE_EFFECT_FROZEN;
-			if(GameClient()->m_aClients[i].m_Predicted.m_Invincible)
+			if(InvincibleAtDisplay)
 				aRenderInfo[i].m_TeeRenderFlags |= TEE_EFFECT_SPARKLE;
 
-			Frozen = GameClient()->m_aClients[i].m_Predicted.m_FreezeEnd != 0;
+			Frozen = FreezeEnd != 0;
 			// TClient: fast input uses RegularPredicted for freeze, but in fast practice
 			// the practice world state must take priority over the real server state.
-			if(g_Config.m_BcInputs != BC_INPUTS_OFF && !PracticeParticipant)
+			if(g_Config.m_BcInputs != BC_INPUTS_OFF && !PracticeParticipant && !ClientData.m_GoresRenderSampleValid)
 				Frozen = GameClient()->m_aClients[i].m_RegularPredicted.m_FreezeEnd != 0;
 		}
 		else
@@ -1834,8 +1871,8 @@ void CPlayers::OnRender()
 
 			Frozen = GameClient()->m_Snap.m_aCharacters[i].m_HasExtendedData && GameClient()->m_Snap.m_aCharacters[i].m_ExtendedData.m_FreezeEnd != 0;
 		}
-		const bool LiveFrozen = UsesPredictedFreezeState ?
-						GameClient()->m_aClients[i].m_Predicted.m_LiveFrozen :
+		const bool LiveFrozen = (UsesPredictedFreezeState || GameClient()->m_aClients[i].m_GoresRenderSampleValid) ?
+						(GameClient()->m_aClients[i].m_GoresRenderSampleValid ? GameClient()->m_aClients[i].m_aGoresRenderSample[GameClient()->m_aClients[i].m_GoresRenderTick % 200].m_LiveFrozen : GameClient()->m_aClients[i].m_Predicted.m_LiveFrozen) :
 						GameClient()->m_aClients[i].m_LiveFrozen;
 		aFrozen[i] = Frozen || LiveFrozen;
 

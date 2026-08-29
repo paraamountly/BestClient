@@ -3362,7 +3362,7 @@ void CGameClient::OnPredict()
 		const int BaseTick = Client()->GameTick(g_Config.m_ClDummy);
 		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 		{
-			m_aClients[ClientId].m_GoresRenderValid = false;
+			m_aClients[ClientId].m_GoresRenderSampleValid = false;
 			m_aClients[ClientId].m_GoresPrediction.m_RegularFreezeTransition = false;
 			m_aClients[ClientId].m_GoresPrediction.m_SpeculativeFreezeTransition = false;
 			if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
@@ -3371,6 +3371,15 @@ void CGameClient::OnPredict()
 				m_aClients[ClientId].m_aGoresPredPos[BaseTick % 200] = pChar->Core()->m_Pos;
 				m_aClients[ClientId].m_aGoresPredTick[BaseTick % 200] = BaseTick;
 				m_aClients[ClientId].m_aGoresPredGeneration[BaseTick % 200] = m_GoresPredictionGeneration;
+				auto &Sample = m_aClients[ClientId].m_aGoresRenderSample[BaseTick % 200];
+				pChar->Core()->Write(&Sample.m_Core);
+				Sample.m_Core.m_Tick = BaseTick;
+				Sample.m_AttackTick = pChar->GetAttackTick();
+				Sample.m_Weapon = pChar->Core()->m_ActiveWeapon;
+				Sample.m_FreezeEnd = pChar->Core()->m_FreezeEnd;
+				Sample.m_LiveFrozen = pChar->Core()->m_LiveFrozen;
+				Sample.m_DeepFrozen = pChar->Core()->m_DeepFrozen;
+				Sample.m_Invincible = pChar->Core()->m_Invincible;
 			}
 		}
 	}
@@ -3409,12 +3418,6 @@ void CGameClient::OnPredict()
 			m_PrevPredictedWorld.CopyWorld(&m_PredictedWorld);
 			m_PredictedPrevChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_PrevPredicted = pLocalChar->GetCore();
-		}
-		else if(Tick == FinalTickSelf)
-		{
-			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
-				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
-					m_aClients[ClientId].m_GoresRenderPrev = pChar->GetCore();
 		}
 		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
@@ -3504,17 +3507,6 @@ void CGameClient::OnPredict()
 		{
 			m_PredictedChar = pLocalChar->GetCore();
 			m_aClients[m_Snap.m_LocalClientId].m_Predicted = pLocalChar->GetCore();
-		}
-		else if(Tick == FinalTickSelf)
-		{
-			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
-				if(CCharacter *pChar = m_PredictedWorld.GetCharacterById(ClientId))
-				{
-					auto &Client = m_aClients[ClientId];
-					Client.m_GoresRenderCur = pChar->GetCore();
-					Client.m_GoresRenderGeneration = m_GoresPredictionGeneration;
-					Client.m_GoresRenderValid = true;
-				}
 		}
 		if(Tick == FinalTickOthers && !GoresInputMode)
 		{
@@ -3861,6 +3853,15 @@ void CGameClient::OnPredict()
 					m_aClients[i].m_aGoresPredPos[Tick % 200] = pChar->Core()->m_Pos;
 					m_aClients[i].m_aGoresPredTick[Tick % 200] = Tick;
 					m_aClients[i].m_aGoresPredGeneration[Tick % 200] = m_GoresPredictionGeneration;
+					auto &Sample = m_aClients[i].m_aGoresRenderSample[Tick % 200];
+					pChar->Core()->Write(&Sample.m_Core);
+					Sample.m_Core.m_Tick = Tick;
+					Sample.m_AttackTick = pChar->GetAttackTick();
+					Sample.m_Weapon = pChar->Core()->m_ActiveWeapon;
+					Sample.m_FreezeEnd = pChar->Core()->m_FreezeEnd;
+					Sample.m_LiveFrozen = pChar->Core()->m_LiveFrozen;
+					Sample.m_DeepFrozen = pChar->Core()->m_DeepFrozen;
+					Sample.m_Invincible = pChar->Core()->m_Invincible;
 					if(Tick > FinalTickRegular)
 						continue;
 				}
@@ -4768,10 +4769,9 @@ void CGameClient::CClientData::Reset()
 	std::fill(std::begin(m_aGoresPredPos), std::end(m_aGoresPredPos), vec2(0.0f, 0.0f));
 	std::fill(std::begin(m_aGoresPredTick), std::end(m_aGoresPredTick), 0);
 	std::fill(std::begin(m_aGoresPredGeneration), std::end(m_aGoresPredGeneration), 0);
-	m_GoresRenderPrev.Reset();
-	m_GoresRenderCur.Reset();
-	m_GoresRenderGeneration = 0;
-	m_GoresRenderValid = false;
+	m_GoresRenderIntra = 0.0f;
+	m_GoresRenderTick = 0;
+	m_GoresRenderSampleValid = false;
 	m_GoresPrediction = {};
 	m_SpecCharPresent = false;
 	m_SpecChar = vec2(0.0f, 0.0f);
@@ -5507,6 +5507,7 @@ void CGameClient::UpdateRenderedCharacters()
 		m_aClients[i].m_RenderPrev = m_Snap.m_aCharacters[i].m_Prev;
 		m_aClients[i].m_IsPredicted = false;
 		m_aClients[i].m_IsPredictedLocal = false;
+		m_aClients[i].m_GoresRenderSampleValid = false;
 		vec2 UnpredPos = mix(
 			vec2(m_Snap.m_aCharacters[i].m_Prev.m_X, m_Snap.m_aCharacters[i].m_Prev.m_Y),
 			vec2(m_Snap.m_aCharacters[i].m_Cur.m_X, m_Snap.m_aCharacters[i].m_Cur.m_Y),
@@ -5557,40 +5558,39 @@ void CGameClient::UpdateRenderedCharacters()
 		const bool GoresInteractionMember = IsGoresInputMode() && m_aGoresInteractionGroup[i];
 		if(Predict() && (i == m_Snap.m_LocalClientId || ((AntiPingPlayers() || (IsGoresInputMode() && (g_Config.m_BcGoresInputOthers || GoresInteractionMember))) && !IsOtherTeam(i))) && pChar)
 		{
-			int GoresRequestedTick = Client()->PredGameTick(g_Config.m_ClDummy);
-			float GoresRequestedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
-			BcInputs::ApplyOffset(m_GoresRequestedHorizon, GoresRequestedTick, GoresRequestedIntra);
-			const bool HasExactGoresRequestedHistory = GoresRequestedTick > 0 &&
-				m_aClients[i].m_aGoresPredTick[(GoresRequestedTick - 1) % 200] == GoresRequestedTick - 1 &&
-				m_aClients[i].m_aGoresPredTick[GoresRequestedTick % 200] == GoresRequestedTick &&
-				m_aClients[i].m_aGoresPredGeneration[(GoresRequestedTick - 1) % 200] == m_GoresPredictionGeneration &&
-				m_aClients[i].m_aGoresPredGeneration[GoresRequestedTick % 200] == m_GoresPredictionGeneration;
-			const bool UseGoresRequestedRenderCore = IsGoresInputMode() &&
-				m_aClients[i].m_GoresRenderValid && m_aClients[i].m_GoresRenderGeneration == m_GoresPredictionGeneration &&
-				HasExactGoresRequestedHistory &&
-				((i == m_Snap.m_LocalClientId && absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f) ||
-				(i != m_Snap.m_LocalClientId && ((GoresInteractionMember && absolute(m_GoresAcceptedHorizon - m_GoresRequestedHorizon) <= 0.0001f) ||
-				(g_Config.m_BcGoresInputOthers && !IsFastInputLocalClient(i)))));
-			if(UseGoresRequestedRenderCore)
-			{
-				m_aClients[i].m_GoresRenderCur.Write(&m_aClients[i].m_RenderCur);
-				m_aClients[i].m_GoresRenderPrev.Write(&m_aClients[i].m_RenderPrev);
-			}
-			else
+			int GoresRenderTick = 0;
+			float GoresRenderIntra = 0.0f;
+			const bool ExactGoresSample = IsGoresInputMode() && ResolveGoresDisplaySample(i, m_aClients[i].m_RenderPrev, m_aClients[i].m_RenderCur, Pos, GoresRenderTick, GoresRenderIntra);
+			if(!ExactGoresSample)
 			{
 				m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
 				m_aClients[i].m_PrevPredicted.Write(&m_aClients[i].m_RenderPrev);
 			}
+			else
+			{
+				m_aClients[i].m_GoresRenderSampleValid = true;
+				m_aClients[i].m_GoresRenderTick = GoresRenderTick;
+				m_aClients[i].m_GoresRenderIntra = GoresRenderIntra;
+			}
 
 			m_aClients[i].m_IsPredicted = true;
 
-			Pos = mix(
-				vec2(m_aClients[i].m_RenderPrev.m_X, m_aClients[i].m_RenderPrev.m_Y),
-				vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
-				m_aClients[i].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy));
+			if(!ExactGoresSample)
+			{
+				Pos = mix(
+					vec2(m_aClients[i].m_RenderPrev.m_X, m_aClients[i].m_RenderPrev.m_Y),
+					vec2(m_aClients[i].m_RenderCur.m_X, m_aClients[i].m_RenderCur.m_Y),
+					Client()->PredIntraGameTick(g_Config.m_ClDummy));
+			}
 
 			if(IsGoresInputMode())
-				Pos = GetGoresInputPos(i);
+			{
+				if(!ExactGoresSample)
+				{
+					m_GoresFallbackCount++;
+					m_GoresHistoryFailureCount++;
+				}
+			}
 			else if(g_Config.m_TcRemoveAnti)
 				Pos = GetFreezePos(i);
 			else if(HasFastInput && (i == m_Snap.m_LocalClientId || (PredictDummy() && i == m_aLocalIds[!g_Config.m_ClDummy])))
@@ -5602,7 +5602,7 @@ void CGameClient::UpdateRenderedCharacters()
 				// Cloud uses GetFastInputPos (same as Saiko). Do not route through GetSmoothPos —
 				// that path was built for ClAntiPingSmooth and on old kernels (sparse PredPos /
 				// snap gaps) made every tee look like ~15 FPS while the FPS counter stayed fine.
-				if(AntiPingGunfire() && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
+				if(!ExactGoresSample && AntiPingGunfire() && ((pChar->m_NinjaJetpack && pChar->m_FreezeTime == 0) || m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA || m_Snap.m_aCharacters[i].m_Cur.m_Weapon == m_aClients[i].m_Predicted.m_ActiveWeapon))
 				{
 					m_aClients[i].m_RenderCur.m_AttackTick = pChar->GetAttackTick();
 					if(m_Snap.m_aCharacters[i].m_Cur.m_Weapon != WEAPON_NINJA && !(pChar->m_NinjaJetpack && pChar->Core()->m_ActiveWeapon == WEAPON_GUN))
@@ -5612,14 +5612,15 @@ void CGameClient::UpdateRenderedCharacters()
 			else
 			{
 				// use unpredicted values for other players
-				m_aClients[i].m_RenderPrev.m_Angle = m_Snap.m_aCharacters[i].m_Prev.m_Angle;
-				m_aClients[i].m_RenderCur.m_Angle = m_Snap.m_aCharacters[i].m_Cur.m_Angle;
+				if(!ExactGoresSample)
+				{
+					m_aClients[i].m_RenderPrev.m_Angle = m_Snap.m_aCharacters[i].m_Prev.m_Angle;
+					m_aClients[i].m_RenderCur.m_Angle = m_Snap.m_aCharacters[i].m_Cur.m_Angle;
+				}
 
 				if(IsGoresInputMode())
 				{
-					// Gores samples exact physics history. Interaction group members must not be
-					// moved independently by either legacy or improved anti-ping smoothing.
-					Pos = GetGoresInputPos(i);
+					// Exact Gores samples already selected body and metadata atomically above.
 				}
 				// Cloud skips ClAntiPingSmooth (same reason as aBeforeRender): on old kernels it
 				// locks others to snap rate. Use raw prediction / fast-input paths instead.
@@ -5987,6 +5988,18 @@ vec2 CGameClient::GetFastInputPos(int ClientId)
 
 vec2 CGameClient::GetGoresInputPos(int ClientId)
 {
+	CNetObj_Character Prev{}, Cur{};
+	vec2 Pos;
+	int Tick;
+	float Intra;
+	if(ResolveGoresDisplaySample(ClientId, Prev, Cur, Pos, Tick, Intra))
+		return Pos;
+
+	return mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
+}
+
+float CGameClient::GetGoresDisplayHorizon(int ClientId) const
+{
 	float Offset = m_GoresRequestedHorizon;
 	if(ClientId == m_Snap.m_LocalClientId)
 		Offset = m_GoresAcceptedHorizon;
@@ -5997,9 +6010,14 @@ vec2 CGameClient::GetGoresInputPos(int ClientId)
 	else if(!IsFastInputLocalClient(ClientId))
 		Offset = g_Config.m_BcGoresInputOthers ? m_GoresRequestedHorizon : 0.0f;
 
-	int Tick = Client()->PredGameTick(g_Config.m_ClDummy);
-	float Intra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
-	BcInputs::ApplyOffset(Offset, Tick, Intra);
+	return Offset;
+}
+
+bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra) const
+{
+	Tick = Client()->PredGameTick(g_Config.m_ClDummy);
+	Intra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	BcInputs::ApplyOffset(GetGoresDisplayHorizon(ClientId), Tick, Intra);
 
 	if(Tick > 0 &&
 		m_aClients[ClientId].m_aGoresPredTick[(Tick - 1) % 200] == Tick - 1 &&
@@ -6007,20 +6025,25 @@ vec2 CGameClient::GetGoresInputPos(int ClientId)
 		m_aClients[ClientId].m_aGoresPredGeneration[(Tick - 1) % 200] == m_GoresPredictionGeneration &&
 		m_aClients[ClientId].m_aGoresPredGeneration[Tick % 200] == m_GoresPredictionGeneration)
 	{
-		return mix(m_aClients[ClientId].m_aGoresPredPos[(Tick - 1) % 200], m_aClients[ClientId].m_aGoresPredPos[Tick % 200], Intra);
+		const auto &PrevSample = m_aClients[ClientId].m_aGoresRenderSample[(Tick - 1) % 200];
+		const auto &CurSample = m_aClients[ClientId].m_aGoresRenderSample[Tick % 200];
+		static_cast<CNetObj_CharacterCore &>(Prev) = PrevSample.m_Core;
+		static_cast<CNetObj_CharacterCore &>(Cur) = CurSample.m_Core;
+		Prev.m_AttackTick = PrevSample.m_AttackTick;
+		Cur.m_AttackTick = CurSample.m_AttackTick;
+		Prev.m_Weapon = PrevSample.m_Weapon;
+		Cur.m_Weapon = CurSample.m_Weapon;
+		Pos = mix(m_aClients[ClientId].m_aGoresPredPos[(Tick - 1) % 200], m_aClients[ClientId].m_aGoresPredPos[Tick % 200], Intra);
+		return true;
 	}
+	return false;
+}
 
-	m_GoresFallbackCount++;
-	m_GoresHistoryFailureCount++;
-	const int RegularTick = Client()->PredGameTick(g_Config.m_ClDummy);
-	const float RegularIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
-	if(RegularTick > 0 &&
-		m_aClients[ClientId].m_aPredTick[(RegularTick - 1) % 200] == RegularTick - 1 &&
-		m_aClients[ClientId].m_aPredTick[RegularTick % 200] == RegularTick)
-	{
-		return mix(m_aClients[ClientId].m_aPredPos[(RegularTick - 1) % 200], m_aClients[ClientId].m_aPredPos[RegularTick % 200], RegularIntra);
-	}
-	return m_aClients[ClientId].m_RegularPredicted.m_Pos;
+float CGameClient::RenderIntra(int ClientId) const
+{
+	if(in_range(ClientId, MAX_CLIENTS - 1) && m_aClients[ClientId].m_GoresRenderSampleValid)
+		return m_aClients[ClientId].m_GoresRenderIntra;
+	return m_aClients[ClientId].m_IsPredicted ? Client()->PredIntraGameTick(g_Config.m_ClDummy) : Client()->IntraGameTick(g_Config.m_ClDummy);
 }
 vec2 CGameClient::GetFreezePos(int ClientId)
 {
