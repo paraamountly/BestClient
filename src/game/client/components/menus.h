@@ -716,6 +716,9 @@ protected:
 
 public:
 	const IGraphics::CTextureHandle &BcLogoTexture() const { return m_BcLogoTexture; }
+	// Shared settings renderer used by the start-menu drawer. This deliberately
+	// keeps all controls bound to the regular settings implementation.
+	void RenderSettingsInStartDrawer(CUIRect View) { RenderSettings(View); }
 
 	void RenderBackground();
 

@@ -1,397 +1,417 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
-/* If you are missing that file, acquire a complete release at teeworlds.com.                */
 #include "menus_start.h"
-
-#include <algorithm>
 
 #include <engine/client/updater.h>
 #include <engine/font_icons.h>
 #include <engine/graphics.h>
 #include <engine/keys.h>
-#include <engine/serverbrowser.h>
 #include <engine/shared/config.h>
 #include <engine/textrender.h>
 
-#include <generated/client_data.h>
-
-#include <game/client/gameclient.h>
 #include <game/client/components/bestclient/version.h>
+#include <game/client/gameclient.h>
 #include <game/client/ui.h>
 #include <game/localization.h>
 #include <game/version.h>
 
-#if defined(CONF_PLATFORM_ANDROID)
-#include <android/android_main.h>
+#include <algorithm>
+#include <cmath>
+
+namespace
+{
+	// Geometry and motion tuning is intentionally kept together for visual comparison passes.
+	constexpr float LOGO_DIAMETER_RATIO = 0.165f;
+	constexpr float STRIP_HEIGHT_RATIO = 0.078f;
+	constexpr float MENU_ANCHOR_X_RATIO = 0.34f;
+	constexpr float SEGMENT_WIDTH = 88.0f;
+	constexpr float SEGMENT_MAX_GROUP_WIDTH = 440.0f;
+	constexpr float SEGMENT_SKEW = 7.0f;
+	constexpr float HOVER_EXPANSION = 0.04f;
+	constexpr float DRAWER_WIDTH_RATIO = 0.32f;
+	constexpr float OVERLAY_ALPHA = 0.54f;
+	constexpr float HOVER_DURATION = 0.12f;
+	constexpr float SUBMENU_DURATION = 0.22f;
+	constexpr float DRAWER_DURATION = 0.25f;
+	constexpr float PAGE_TRANSITION_DURATION = 0.30f;
+
+	float EaseOutCubic(float T) { return 1.0f - std::pow(1.0f - T, 3.0f); }
+	float EaseInOutCubic(float T) { return T < 0.5f ? 4.0f * T * T * T : 1.0f - std::pow(-2.0f * T + 2.0f, 3.0f) / 2.0f; }
+
+	ColorRGBA Mix(ColorRGBA A, ColorRGBA B, float T)
+	{
+		return ColorRGBA(A.r + (B.r - A.r) * T, A.g + (B.g - A.g) * T, A.b + (B.b - A.b) * T, A.a + (B.a - A.a) * T);
+	}
+
+	constexpr ColorRGBA COLOR_SETTINGS(0.22f, 0.22f, 0.27f, 0.96f);
+	constexpr ColorRGBA COLOR_PLAY(0.38f, 0.25f, 0.72f, 0.96f);
+	constexpr ColorRGBA COLOR_EDITOR(0.87f, 0.48f, 0.16f, 0.96f);
+	constexpr ColorRGBA COLOR_BROWSE(0.43f, 0.69f, 0.18f, 0.96f);
+	constexpr ColorRGBA COLOR_EXIT(0.82f, 0.20f, 0.43f, 0.96f);
+
+	bool IsSubmenu(CMenusStart::EState State)
+	{
+		return State == CMenusStart::EState::PLAY_SUBMENU || State == CMenusStart::EState::EDITOR_SUBMENU || State == CMenusStart::EState::BROWSE_SUBMENU;
+	}
+} // namespace
+
+void CMenusStart::BeginTransition(EState Target, int PendingPage)
+{
+	if(m_Interaction.m_Target == Target && m_Interaction.m_Progress < 1.0f)
+		return;
+	m_Interaction.m_Previous = m_Interaction.m_Current;
+	m_Interaction.m_Target = Target;
+	m_Interaction.m_Progress = 0.0f;
+	m_Interaction.m_PendingPage = PendingPage;
+}
+
+void CMenusStart::UpdateAnimations()
+{
+	if(m_Interaction.m_Progress >= 1.0f)
+		return;
+	float Duration = SUBMENU_DURATION;
+	if(m_Interaction.m_Target == EState::SETTINGS_DRAWER || m_Interaction.m_Target == EState::TOP_POPOVER || m_Interaction.m_Target == EState::RIGHT_DRAWER || m_Interaction.m_Previous == EState::SETTINGS_DRAWER || m_Interaction.m_Previous == EState::TOP_POPOVER || m_Interaction.m_Previous == EState::RIGHT_DRAWER)
+		Duration = DRAWER_DURATION;
+	else if(m_Interaction.m_Target == EState::PAGE_TRANSITION)
+		Duration = PAGE_TRANSITION_DURATION;
+
+	const float Speed = std::max(0.1f, (float)g_Config.m_BcMainMenuAnimationSpeed);
+	m_Interaction.m_Progress = g_Config.m_BcMainMenuAnimation ? std::min(1.0f, m_Interaction.m_Progress + Client()->RenderFrameTime() * Speed / Duration) : 1.0f;
+	if(m_Interaction.m_Progress == 1.0f)
+	{
+		m_Interaction.m_Current = m_Interaction.m_Target;
+		if(m_Interaction.m_Current == EState::PAGE_TRANSITION && m_Interaction.m_PendingPage != -1)
+		{
+			GameClient()->m_Menus.SetMenuPage(m_Interaction.m_PendingPage);
+			GameClient()->m_Menus.SetShowStart(false);
+			m_Interaction = {};
+		}
+	}
+}
+
+void CMenusStart::RenderDimmer(CUIRect MainView, float Alpha)
+{
+	MainView.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, Alpha), IGraphics::CORNER_NONE, 0.0f);
+}
+
+void CMenusStart::RenderCenterLogo(CUIRect MainView, float Visibility)
+{
+	const float Diameter = std::clamp(MainView.h * LOGO_DIAMETER_RATIO, 104.0f, 154.0f);
+	const vec2 Center(MainView.x + MainView.w * MENU_ANCHOR_X_RATIO, MainView.y + MainView.h * 0.51f);
+	// Primitive radial burst, kept subtle so custom/video backgrounds remain visible.
+	Graphics()->TextureClear();
+	Graphics()->LinesBegin();
+	for(int i = 0; i < 24; ++i)
+	{
+		const float A = i * 2.0f * pi / 24.0f;
+		Graphics()->SetColor(0.55f, 0.38f, 0.9f, 0.18f * Visibility);
+		IGraphics::CLineItem Line(Center.x + std::cos(A) * Diameter * 0.53f, Center.y + std::sin(A) * Diameter * 0.53f, Center.x + std::cos(A) * Diameter * 0.68f, Center.y + std::sin(A) * Diameter * 0.68f);
+		Graphics()->LinesDraw(&Line, 1);
+	}
+	Graphics()->LinesEnd();
+	CUIRect Circle{Center.x - Diameter / 2, Center.y - Diameter / 2, Diameter, Diameter};
+	Circle.Draw(ColorRGBA(0.05f, 0.04f, 0.08f, 0.7f * Visibility), IGraphics::CORNER_ALL, Diameter / 2);
+	Circle.Margin(4.0f, &Circle);
+	Circle.Draw(ColorRGBA(0.94f, 0.93f, 1.0f, Visibility), IGraphics::CORNER_ALL, Circle.w / 2);
+	Circle.Margin(5.0f, &Circle);
+	Circle.Draw(ColorRGBA(0.32f, 0.20f, 0.62f, Visibility), IGraphics::CORNER_ALL, Circle.w / 2);
+	TextRender()->TextColor(1, 1, 1, Visibility);
+	Ui()->DoLabel(&Circle, "GORES", std::clamp(Diameter * 0.19f, 20.0f, 29.0f), TEXTALIGN_MC);
+	TextRender()->TextColor(TextRender()->DefaultTextColor());
+}
+
+void CMenusStart::RenderMainStrip(CUIRect MainView, float Visibility, bool InputEnabled)
+{
+	const float StripH = std::clamp(MainView.h * STRIP_HEIGHT_RATIO, 52.0f, 76.0f);
+	const float CenterY = MainView.y + MainView.h * 0.51f;
+	const float LogoD = std::clamp(MainView.h * LOGO_DIAMETER_RATIO, 104.0f, 154.0f);
+	const float AnchorX = MainView.x + MainView.w * MENU_ANCHOR_X_RATIO;
+	CUIRect Strip{MainView.x, CenterY - StripH / 2, MainView.w, StripH};
+	Strip.Draw(ColorRGBA(0.025f, 0.022f, 0.035f, 0.80f * Visibility), IGraphics::CORNER_NONE, 0.0f);
+
+	auto DrawSegment = [&](const void *pId, CUIRect Rect, const char *pIcon, const char *pLabel, ColorRGBA Color, float &Hover, bool Enabled) {
+		const bool Hovered = Enabled && Ui()->MouseHovered(&Rect);
+		const float Step = g_Config.m_BcMainMenuAnimation ? Client()->RenderFrameTime() * std::max(0.1f, (float)g_Config.m_BcMainMenuAnimationSpeed) / HOVER_DURATION : 1.0f;
+		Hover += (Hovered ? 1.0f : -1.0f) * Step;
+		Hover = std::clamp(Hover, 0.0f, 1.0f);
+		const float Expand = Rect.w * HOVER_EXPANSION * EaseOutCubic(Hover);
+		Rect.x -= Expand / 2;
+		Rect.w += Expand;
+		Color = Mix(Color, ColorRGBA(std::min(1.0f, Color.r + .15f), std::min(1.0f, Color.g + .15f), std::min(1.0f, Color.b + .15f), Color.a), Hover);
+		Color.a *= Visibility;
+		Graphics()->TextureClear();
+		Graphics()->QuadsBegin();
+		Graphics()->SetColor(Color);
+		IGraphics::CFreeformItem Quad(vec2(Rect.x + SEGMENT_SKEW, Rect.y), vec2(Rect.x + Rect.w + SEGMENT_SKEW, Rect.y), vec2(Rect.x + Rect.w - SEGMENT_SKEW, Rect.y + Rect.h), vec2(Rect.x - SEGMENT_SKEW, Rect.y + Rect.h));
+		Graphics()->QuadsDrawFreeform(&Quad, 1);
+		Graphics()->QuadsEnd();
+		CUIRect Icon, Label;
+		Rect.HSplitTop(Rect.h * .58f, &Icon, &Label);
+		TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+		Ui()->DoLabel(&Icon, pIcon, 20.0f + Hover * 1.5f, TEXTALIGN_MC);
+		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+		Ui()->DoLabel(&Label, pLabel, 10.0f + Hover, TEXTALIGN_MC);
+		return Enabled && Ui()->DoButtonLogic(pId, 0, &Rect, BUTTONFLAG_LEFT);
+	};
+
+	const bool Stable = m_Interaction.m_Progress >= 1.0f;
+	EState ShownState = m_Interaction.m_Current;
+	float SubmenuAmount = IsSubmenu(ShownState) ? 1.0f : 0.0f;
+	if(m_Interaction.m_Progress < 1.0f && (IsSubmenu(m_Interaction.m_Previous) || IsSubmenu(m_Interaction.m_Target)))
+	{
+		ShownState = IsSubmenu(m_Interaction.m_Target) ? m_Interaction.m_Target : m_Interaction.m_Previous;
+		SubmenuAmount = IsSubmenu(m_Interaction.m_Target) ? EaseOutCubic(m_Interaction.m_Progress) : 1.0f - EaseInOutCubic(m_Interaction.m_Progress);
+	}
+	const float MainAmount = 1.0f - SubmenuAmount;
+	const float GroupW = std::min(SEGMENT_MAX_GROUP_WIDTH, MainView.w - AnchorX - LogoD * .52f - 20.0f);
+	const float StartX = AnchorX + LogoD * .48f;
+	static CButtonContainer s_aPrimary[5];
+	if(MainAmount > 0.01f)
+	{
+		CUIRect Settings{AnchorX - LogoD * .48f - SEGMENT_WIDTH, Strip.y, SEGMENT_WIDTH, Strip.h};
+		if(DrawSegment(&s_aPrimary[0], Settings, FontIcon::GEAR, Localize("Settings"), COLOR_SETTINGS, m_Interaction.m_aPrimaryHover[0], InputEnabled && Stable && ShownState == EState::MAIN))
+			BeginTransition(EState::SETTINGS_DRAWER);
+		const char *apIcons[] = {FontIcon::PLAY, FontIcon::PEN_TO_SQUARE, FontIcon::EARTH_AMERICAS, FontIcon::POWER_OFF};
+		const char *apLabels[] = {Localize("Play", "Start menu"), Localize("Editor"), Localize("Browse"), Localize("Exit")};
+		const ColorRGBA aColors[] = {COLOR_PLAY, COLOR_EDITOR, COLOR_BROWSE, COLOR_EXIT};
+		for(int i = 0; i < 4; ++i)
+		{
+			CUIRect R{StartX + GroupW / 4 * i, Strip.y, GroupW / 4, Strip.h};
+			if(DrawSegment(&s_aPrimary[i + 1], R, apIcons[i], apLabels[i], aColors[i], m_Interaction.m_aPrimaryHover[i + 1], InputEnabled && Stable && ShownState == EState::MAIN))
+			{
+				if(i == 0)
+					BeginTransition(EState::PLAY_SUBMENU);
+				else if(i == 1)
+					BeginTransition(EState::EDITOR_SUBMENU);
+				else if(i == 2)
+					BeginTransition(EState::BROWSE_SUBMENU);
+				else if(g_Config.m_BcConfirmQuit || GameClient()->Editor()->HasUnsavedData())
+					GameClient()->m_Menus.ShowQuitPopup();
+				else
+					Client()->Quit();
+			}
+		}
+	}
+	if(SubmenuAmount > 0.01f)
+	{
+		const char *apLabels[4] = {};
+		const char *apIcons[4] = {};
+		int Count = 0;
+		ColorRGBA Color = COLOR_PLAY;
+		if(ShownState == EState::PLAY_SUBMENU)
+		{
+			Count = 4;
+			apLabels[0] = Localize("Internet");
+			apLabels[1] = Localize("Favorites");
+			apLabels[2] = Localize("LAN");
+			apLabels[3] = Localize("Back");
+			apIcons[0] = FontIcon::EARTH_AMERICAS;
+			apIcons[1] = FontIcon::HEART;
+			apIcons[2] = FontIcon::NETWORK_WIRED;
+			apIcons[3] = FontIcon::CHEVRON_LEFT;
+		}
+		else if(ShownState == EState::EDITOR_SUBMENU)
+		{
+			Count = 3;
+			Color = COLOR_EDITOR;
+			apLabels[0] = Localize("Map editor");
+			apLabels[1] = GameClient()->m_LocalServer.IsServerRunning() ? Localize("Stop server") : Localize("Run server");
+			apLabels[2] = Localize("Back");
+			apIcons[0] = FontIcon::PEN_TO_SQUARE;
+			apIcons[1] = FontIcon::NETWORK_WIRED;
+			apIcons[2] = FontIcon::CHEVRON_LEFT;
+		}
+		else
+		{
+			Count = 3;
+			Color = COLOR_BROWSE;
+			apLabels[0] = Localize("Demos");
+			apLabels[1] = Localize("Clans");
+			apLabels[2] = Localize("Back");
+			apIcons[0] = FontIcon::FILM;
+			apIcons[1] = FontIcon::ICON_USERS;
+			apIcons[2] = FontIcon::CHEVRON_LEFT;
+		}
+		static CButtonContainer s_aSubmenu[4];
+		for(int i = 0; i < Count; ++i)
+		{
+			const float W = GroupW / Count;
+			CUIRect R{StartX + (W * i - GroupW * .08f) * SubmenuAmount, Strip.y, W * SubmenuAmount, Strip.h};
+			if(DrawSegment(&s_aSubmenu[i], R, apIcons[i], apLabels[i], Color, m_Interaction.m_aSubmenuHover[i], InputEnabled && Stable && IsSubmenu(ShownState)))
+			{
+				if(i == Count - 1)
+					BeginTransition(EState::MAIN);
+				else if(ShownState == EState::PLAY_SUBMENU)
+					BeginTransition(EState::PAGE_TRANSITION, i == 0 ? CMenus::PAGE_INTERNET : i == 1 ? CMenus::PAGE_FAVORITES :
+															   CMenus::PAGE_LAN);
+				else if(ShownState == EState::BROWSE_SUBMENU)
+					BeginTransition(EState::PAGE_TRANSITION, i == 0 ? CMenus::PAGE_DEMOS : CMenus::PAGE_CLANS);
+				else if(i == 0)
+				{
+					g_Config.m_ClEditor = 1;
+					Input()->MouseModeRelative();
+				}
+				else if(GameClient()->m_LocalServer.IsServerRunning())
+					GameClient()->m_LocalServer.KillServer();
+				else
+					GameClient()->m_LocalServer.RunServer({});
+			}
+		}
+	}
+}
+
+void CMenusStart::RenderTopUtilityBar(CUIRect MainView, bool InputEnabled)
+{
+	CUIRect Bar{MainView.x, MainView.y, MainView.w, 25.0f};
+	Bar.Draw(ColorRGBA(0.02f, 0.02f, 0.03f, 0.72f), IGraphics::CORNER_NONE, 0.0f);
+	CUIRect Brand{Bar.x + 12.0f, Bar.y, 170.0f, Bar.h};
+	Ui()->DoLabel(&Brand, "GORES CLIENT  /  HOME", 11.0f, TEXTALIGN_ML);
+	static CButtonContainer s_Profile, s_Info;
+	CUIRect Info{Bar.x + Bar.w - 36.0f, Bar.y, 32.0f, Bar.h};
+	CUIRect Profile{Info.x - 38.0f, Bar.y, 32.0f, Bar.h};
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	if(InputEnabled && GameClient()->m_Menus.DoButton_Menu(&s_Info, FontIcon::INFO, 0, &Info, BUTTONFLAG_LEFT, nullptr, 0, 0.0f, 0.0f, ColorRGBA(0, 0, 0, 0)))
+		BeginTransition(EState::RIGHT_DRAWER);
+	if(InputEnabled && GameClient()->m_Menus.DoButton_Menu(&s_Profile, FontIcon::USER, 0, &Profile, BUTTONFLAG_LEFT, nullptr, 0, 0.0f, 0.0f, ColorRGBA(0, 0, 0, 0)))
+		BeginTransition(EState::TOP_POPOVER);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+}
+
+void CMenusStart::RenderSettingsDrawer(CUIRect MainView, float Progress)
+{
+	const float W = std::clamp(MainView.w * DRAWER_WIDTH_RATIO, 360.0f, 550.0f);
+	CUIRect Drawer{MainView.x - W * (1.0f - Progress), MainView.y, W, MainView.h};
+	Drawer.Draw(ColorRGBA(0.075f, 0.065f, 0.105f, 0.99f), IGraphics::CORNER_NONE, 0.0f);
+	CUIRect Rail, Content;
+	Drawer.VSplitLeft(58.0f, &Rail, &Content);
+	Rail.Draw(ColorRGBA(0.035f, 0.03f, 0.055f, 1.0f), IGraphics::CORNER_NONE, 0.0f);
+	CUIRect Back{Rail.x + 8, Rail.y + 12, Rail.w - 16, 38};
+	static CButtonContainer s_Back;
+	TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
+	if(Progress >= 1.0f && GameClient()->m_Menus.DoButton_Menu(&s_Back, FontIcon::CHEVRON_LEFT, 0, &Back, BUTTONFLAG_LEFT))
+		BeginTransition(EState::MAIN);
+	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	Content.Margin(10.0f, &Content);
+	if(Progress >= 1.0f)
+	{
+		Ui()->ClipEnable(&Content);
+		GameClient()->m_Menus.RenderSettingsInStartDrawer(Content);
+		Ui()->ClipDisable();
+	}
+}
+
+void CMenusStart::RenderTopPopover(CUIRect MainView, float Progress)
+{
+	CUIRect Panel{MainView.x + MainView.w - 260.0f, MainView.y + 30.0f - 10.0f * (1.0f - Progress), 215.0f, 142.0f * Progress};
+	Panel.Draw(ColorRGBA(0.065f, 0.055f, 0.09f, .98f * Progress), IGraphics::CORNER_ALL, 5.0f);
+	if(Progress < 1.0f)
+		return;
+	const char *apLabels[] = {Localize("Player settings"), Localize("Clans"), Localize("Settings")};
+	static CButtonContainer s_aButtons[3];
+	for(int i = 0; i < 3; ++i)
+	{
+		CUIRect R{Panel.x + 10, Panel.y + 10 + i * 40.0f, Panel.w - 20, 34};
+		if(GameClient()->m_Menus.DoButton_Menu(&s_aButtons[i], apLabels[i], 0, &R, BUTTONFLAG_LEFT))
+		{
+			if(i == 2)
+				BeginTransition(EState::SETTINGS_DRAWER);
+			else
+				BeginTransition(EState::PAGE_TRANSITION, i == 0 ? CMenus::PAGE_SETTINGS : CMenus::PAGE_CLANS);
+		}
+	}
+}
+
+void CMenusStart::RenderRightDrawer(CUIRect MainView, float Progress)
+{
+	const float W = std::clamp(MainView.w * .25f, 280.0f, 420.0f);
+	CUIRect Drawer{MainView.x + MainView.w - W * Progress, MainView.y, W, MainView.h};
+	Drawer.Draw(ColorRGBA(0.055f, 0.05f, 0.075f, .99f), IGraphics::CORNER_NONE, 0.0f);
+	CUIRect Title{Drawer.x + 20, Drawer.y + 28, Drawer.w - 40, 35};
+	Ui()->DoLabel(&Title, Localize("Gores Client"), 24.0f, TEXTALIGN_ML);
+	char aVersion[128];
+	str_format(aVersion, sizeof(aVersion), "Gores %s  ·  DDNet %s", BESTCLIENT_VERSION, GAME_RELEASE_VERSION);
+	CUIRect Version{Title.x, Title.y + 42, Title.w, 25};
+	Ui()->DoLabel(&Version, aVersion, 12.0f, TEXTALIGN_ML);
+	if(Progress < 1.0f)
+		return;
+	const char *apLabels[] = {Localize("Check update"), Localize("Discord"), Localize("Telegram"), Localize("Close")};
+	static CButtonContainer s_aButtons[4];
+	for(int i = 0; i < 4; ++i)
+	{
+		CUIRect R{Drawer.x + 20, Drawer.y + 110 + i * 45.0f, Drawer.w - 40, 36};
+		if(GameClient()->m_Menus.DoButton_Menu(&s_aButtons[i], apLabels[i], 0, &R, BUTTONFLAG_LEFT))
+		{
+			if(i == 0)
+			{
+#if defined(CONF_AUTOUPDATE)
+				Updater()->CheckForUpdate();
 #endif
+			}
+			else if(i == 1)
+				Client()->ViewLink("https://discord.gg/bestclient");
+			else if(i == 2)
+				Client()->ViewLink("https://t.me/bestddnet");
+			else
+				BeginTransition(EState::MAIN);
+		}
+	}
+}
+
+void CMenusStart::HandleEscape()
+{
+	if(!Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+		return;
+	if(m_Interaction.m_Current == EState::TOP_POPOVER || m_Interaction.m_Current == EState::RIGHT_DRAWER || m_Interaction.m_Current == EState::SETTINGS_DRAWER || IsSubmenu(m_Interaction.m_Current))
+		BeginTransition(EState::MAIN);
+	else
+		GameClient()->m_Menus.ShowQuitPopup();
+}
 
 void CMenusStart::RenderStartMenu(CUIRect MainView)
 {
 	GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_START);
+	UpdateAnimations();
+	HandleEscape();
+	const bool Transitioning = m_Interaction.m_Progress < 1.0f;
+	const float P = EaseInOutCubic(m_Interaction.m_Progress);
+	const bool PageLeaving = m_Interaction.m_Target == EState::PAGE_TRANSITION;
+	const float Visibility = PageLeaving ? 1.0f - P : 1.0f;
+	const bool Overlay = m_Interaction.m_Current == EState::SETTINGS_DRAWER || m_Interaction.m_Current == EState::TOP_POPOVER || m_Interaction.m_Current == EState::RIGHT_DRAWER || m_Interaction.m_Target == EState::SETTINGS_DRAWER || m_Interaction.m_Target == EState::TOP_POPOVER || m_Interaction.m_Target == EState::RIGHT_DRAWER;
+	RenderMainStrip(MainView, Visibility, !Transitioning && !Overlay);
+	RenderCenterLogo(MainView, Visibility);
+	RenderTopUtilityBar(MainView, !Transitioning && !Overlay);
 
-	const float Rounding = 10.0f;
-	const float VMargin = MainView.w / 2 - 190.0f;
-	const float ExtMenuBottomOffset = 40.0f;
-
-	CUIRect Button;
-	int NewPage = -1;
-
-	const auto SetIconMode = [&]() {
-		TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
-		TextRender()->SetRenderFlags(ETextRenderFlags::TEXT_RENDER_FLAG_ONLY_ADVANCE_WIDTH | ETextRenderFlags::TEXT_RENDER_FLAG_NO_X_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_Y_BEARING | ETextRenderFlags::TEXT_RENDER_FLAG_NO_PIXEL_ALIGNMENT | ETextRenderFlags::TEXT_RENDER_FLAG_NO_OVERSIZE);
-	};
-	const auto ResetIconMode = [&]() {
-		TextRender()->SetRenderFlags(0);
-		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
-	};
-
-	// Left panel: Discord, Telegram, Check update
-	CUIRect ExtMenu;
-	MainView.VSplitLeft(30.0f, nullptr, &ExtMenu);
-	ExtMenu.VSplitLeft(100.0f, &ExtMenu, nullptr);
-	ExtMenu.HSplitBottom(ExtMenuBottomOffset, &ExtMenu, nullptr);
-
-	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
-	static CButtonContainer s_DiscordButton;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_DiscordButton, Localize("Discord"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-		Client()->ViewLink("https://discord.gg/bestclient");
-
-	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr);
-	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
-	static CButtonContainer s_TelegramButton;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_TelegramButton, Localize("Telegram"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-		Client()->ViewLink("https://t.me/bestddnet");
-
-	ExtMenu.HSplitBottom(5.0f, &ExtMenu, nullptr);
-	ExtMenu.HSplitBottom(20.0f, &ExtMenu, &Button);
-	static CButtonContainer s_CheckUpdateButton;
-	if(GameClient()->m_Menus.DoButton_Menu(&s_CheckUpdateButton, Localize("Check update"), 0, &Button, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
+	float OverlayProgress = Overlay ? 1.0f : 0.0f;
+	EState OverlayState = m_Interaction.m_Current;
+	if(Transitioning && (m_Interaction.m_Target == EState::MAIN || Overlay))
 	{
-#if defined(CONF_AUTOUPDATE)
-		Updater()->CheckForUpdate();
-#endif
+		OverlayState = m_Interaction.m_Target == EState::MAIN ? m_Interaction.m_Previous : m_Interaction.m_Target;
+		OverlayProgress = m_Interaction.m_Target == EState::MAIN ? 1.0f - P : P;
 	}
-
-	// Center block: logo + 5 buttons, vertically centered
-	constexpr float LogoW = 360.0f;
-	constexpr float LogoH = 103.0f;
-	constexpr float LogoGap = 30.0f;
-	constexpr float ButtonH = 40.0f;
-	constexpr float ButtonGap = 5.0f;
-	constexpr float ClansBtnH = 22.0f;
-	constexpr float ClansBtnW = 100.0f;
-	constexpr int MenuButtonCount = 5;
-	const float ButtonsH = MenuButtonCount * ButtonH + (MenuButtonCount - 1) * ButtonGap;
-	const float TotalBlockH = LogoH + LogoGap + ButtonsH;
-
-	CUIRect Menu;
-	MainView.VMargin(VMargin, &Menu);
-
-	const float BlockStartY = MainView.y + (MainView.h - TotalBlockH) / 2.0f - 50.0f;
-
-	// Logo
+	if(OverlayProgress > 0.0f)
 	{
-		const float LogoX = MainView.w / 2.0f - LogoW / 2.0f;
-		const IGraphics::CTextureHandle &LogoTexture = GameClient()->m_Menus.BcLogoTexture();
-		Graphics()->TextureSet(LogoTexture.IsValid() && !LogoTexture.IsNullTexture() ? LogoTexture : g_pData->m_aImages[IMAGE_BANNER].m_Id);
-		Graphics()->QuadsBegin();
-		Graphics()->SetColor(1, 1, 1, 1);
-		IGraphics::CQuadItem LogoQuad(LogoX, BlockStartY, LogoW, LogoH);
-		Graphics()->QuadsDrawTL(&LogoQuad, 1);
-		Graphics()->QuadsEnd();
-	}
-
-	const auto ScaleButtonRect = [](const CUIRect &Base, float Scale) -> CUIRect {
-		CUIRect Out = Base;
-		Out.w *= Scale;
-		Out.h *= Scale;
-		Out.x = Base.x + (Base.w - Out.w) * 0.5f;
-		Out.y = Base.y + (Base.h - Out.h) * 0.5f;
-		return Out;
-	};
-
-	// Build button rects top-down
-	CUIRect aMenuButtons[MenuButtonCount];
-	{
-		float Y = BlockStartY + LogoH + LogoGap;
-		for(int i = 0; i < MenuButtonCount; ++i)
+		RenderDimmer(MainView, OVERLAY_ALPHA * OverlayProgress * (OverlayState == EState::TOP_POPOVER ? .65f : 1.0f));
+		if(OverlayState == EState::SETTINGS_DRAWER)
+			RenderSettingsDrawer(MainView, OverlayProgress);
+		else if(OverlayState == EState::TOP_POPOVER)
+			RenderTopPopover(MainView, OverlayProgress);
+		else if(OverlayState == EState::RIGHT_DRAWER)
+			RenderRightDrawer(MainView, OverlayProgress);
+		if(OverlayProgress >= 1.0f && Ui()->MouseButtonClicked(0))
 		{
-			aMenuButtons[i] = {Menu.x, Y, Menu.w, ButtonH};
-			Y += ButtonH + ButtonGap;
+			const float DrawerW = OverlayState == EState::SETTINGS_DRAWER ? std::clamp(MainView.w * DRAWER_WIDTH_RATIO, 360.0f, 550.0f) : OverlayState == EState::RIGHT_DRAWER ? std::clamp(MainView.w * .25f, 280.0f, 420.0f) :
+																							     0.0f;
+			if((OverlayState == EState::SETTINGS_DRAWER && Ui()->MouseX() > MainView.x + DrawerW) || (OverlayState == EState::RIGHT_DRAWER && Ui()->MouseX() < MainView.x + MainView.w - DrawerW))
+				BeginTransition(EState::MAIN);
 		}
 	}
-
-	// Small Clans button — right-aligned under Settings
-	CUIRect ClansButtonRect = {
-		aMenuButtons[4].x + aMenuButtons[4].w - ClansBtnW,
-		aMenuButtons[4].y + aMenuButtons[4].h + ButtonGap,
-		ClansBtnW,
-		ClansBtnH};
-	static float s_ClansButtonScale = 1.0f;
-
-	// Hover scale animation
-	static float s_aMenuButtonScale[MenuButtonCount] = {};
-	static bool s_MenuButtonScaleInit = false;
-	if(!s_MenuButtonScaleInit)
-	{
-		for(int i = 0; i < MenuButtonCount; ++i)
-			s_aMenuButtonScale[i] = 1.0f;
-		s_MenuButtonScaleInit = true;
-	}
-
-	{
-		const bool AnimEnabled = g_Config.m_BcMainMenuAnimation != 0;
-		int HoveredIndex = -1;
-		bool ClansHovered = false;
-		if(AnimEnabled)
-		{
-			const CUIRect ScaledClans = ScaleButtonRect(ClansButtonRect, s_ClansButtonScale);
-			if(Ui()->MouseHovered(&ScaledClans))
-				ClansHovered = true;
-			else
-			{
-				for(int i = 0; i < MenuButtonCount; ++i)
-				{
-					const CUIRect Scaled = ScaleButtonRect(aMenuButtons[i], s_aMenuButtonScale[i]);
-					if(Ui()->MouseHovered(&Scaled))
-					{
-						HoveredIndex = i;
-						break;
-					}
-				}
-			}
-		}
-		const bool AnyHovered = ClansHovered || HoveredIndex != -1;
-		const float HoverScale = 1.08f;
-		const float OtherScale = 0.94f;
-		const float Speed = (float)g_Config.m_BcMainMenuAnimationSpeed;
-		const float Blend = AnimEnabled ? std::clamp(Client()->RenderFrameTime() * Speed, 0.0f, 1.0f) : 1.0f;
-		{
-			const float Target = (AnimEnabled && AnyHovered) ? (ClansHovered ? HoverScale : OtherScale) : 1.0f;
-			s_ClansButtonScale += (Target - s_ClansButtonScale) * Blend;
-		}
-		for(int i = 0; i < MenuButtonCount; ++i)
-		{
-			const float Target = (AnimEnabled && AnyHovered) ? (i == HoveredIndex ? HoverScale : OtherScale) : 1.0f;
-			s_aMenuButtonScale[i] += (Target - s_aMenuButtonScale[i]) * Blend;
-		}
-	}
-
-	// Play
-	{
-		CUIRect ScaledButton = ScaleButtonRect(aMenuButtons[0], s_aMenuButtonScale[0]);
-		static CButtonContainer s_PlayButton;
-		if((GameClient()->m_Menus.DoButton_MenuEx(&s_PlayButton, Localize("Play", "Start menu"), 0, &ScaledButton, BUTTONFLAG_LEFT, g_Config.m_ClShowStartMenuImages ? "play_game" : nullptr, IGraphics::CORNER_ALL, Rounding, 0.5f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), true) || Ui()->ConsumeHotkey(CUi::HOTKEY_ENTER) || CheckHotKey(KEY_P)))
-			NewPage = g_Config.m_UiPage >= CMenus::PAGE_INTERNET && g_Config.m_UiPage <= CMenus::PAGE_FAVORITE_COMMUNITY_5 ? g_Config.m_UiPage : CMenus::PAGE_INTERNET;
-	}
-
-	// Demos
-	{
-		CUIRect ScaledButton = ScaleButtonRect(aMenuButtons[1], s_aMenuButtonScale[1]);
-		static CButtonContainer s_DemoButton;
-		if((GameClient()->m_Menus.DoButton_MenuEx(&s_DemoButton, Localize("Demos"), 0, &ScaledButton, BUTTONFLAG_LEFT, g_Config.m_ClShowStartMenuImages ? "demos" : nullptr, IGraphics::CORNER_ALL, Rounding, 0.5f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), true) || CheckHotKey(KEY_D)))
-			NewPage = CMenus::PAGE_DEMOS;
-	}
-
-	// Editor
-	{
-		CUIRect ScaledButton = ScaleButtonRect(aMenuButtons[2], s_aMenuButtonScale[2]);
-		static CButtonContainer s_MapEditorButton;
-		if((GameClient()->m_Menus.DoButton_MenuEx(&s_MapEditorButton, Localize("Editor"), 0, &ScaledButton, BUTTONFLAG_LEFT, g_Config.m_ClShowStartMenuImages ? "editor" : nullptr, IGraphics::CORNER_ALL, Rounding, 0.5f, GameClient()->Editor()->HasUnsavedData() ? ColorRGBA(0.0f, 1.0f, 0.0f, 0.25f) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), true) || CheckHotKey(KEY_E)))
-		{
-			g_Config.m_ClEditor = 1;
-			Input()->MouseModeRelative();
-		}
-
-		// "MULTIMAPPING" badge in the editor button's top-left corner
-		{
-			CUIRect Badge = ScaledButton;
-			Badge.VSplitLeft(90.0f, &Badge, nullptr);
-			Badge.HSplitTop(16.0f, &Badge, nullptr);
-			Badge.Margin(3.0f, &Badge);
-			Graphics()->DrawRect4(Badge.x, Badge.y, Badge.w, Badge.h,
-				ColorRGBA(0.62f, 0.28f, 0.95f, 1.0f), ColorRGBA(0.42f, 0.10f, 0.78f, 1.0f),
-				ColorRGBA(0.62f, 0.28f, 0.95f, 1.0f), ColorRGBA(0.42f, 0.10f, 0.78f, 1.0f),
-				IGraphics::CORNER_ALL, 4.0f);
-			Ui()->DoLabel(&Badge, "MULTIMAPPING", 8.0f, TEXTALIGN_MC);
-		}
-	}
-
-	// Run server
-	{
-		CUIRect ScaledButton = ScaleButtonRect(aMenuButtons[3], s_aMenuButtonScale[3]);
-		static CButtonContainer s_LocalServerButton;
-		const bool LocalServerRunning = GameClient()->m_LocalServer.IsServerRunning();
-		if((GameClient()->m_Menus.DoButton_MenuEx(&s_LocalServerButton, LocalServerRunning ? Localize("Stop server") : Localize("Run server"), 0, &ScaledButton, BUTTONFLAG_LEFT, g_Config.m_ClShowStartMenuImages ? "local_server" : nullptr, IGraphics::CORNER_ALL, Rounding, 0.5f, LocalServerRunning ? ColorRGBA(0.0f, 1.0f, 0.0f, 0.25f) : ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), true) || (CheckHotKey(KEY_R) && Input()->KeyPress(KEY_R))))
-		{
-			if(LocalServerRunning)
-				GameClient()->m_LocalServer.KillServer();
-			else
-				GameClient()->m_LocalServer.RunServer({});
-		}
-	}
-
-	// Settings
-	const CUIRect SettingsButton = aMenuButtons[4];
-	{
-		CUIRect ScaledButton = ScaleButtonRect(aMenuButtons[4], s_aMenuButtonScale[4]);
-		static CButtonContainer s_SettingsButton;
-		if(GameClient()->m_Menus.DoButton_MenuEx(&s_SettingsButton, Localize("Settings"), 0, &ScaledButton, BUTTONFLAG_LEFT, g_Config.m_ClShowStartMenuImages ? "settings" : nullptr, IGraphics::CORNER_ALL, Rounding, 0.5f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f), true) || CheckHotKey(KEY_S))
-			NewPage = CMenus::PAGE_SETTINGS;
-	}
-
-	// Clans — small button under Settings, right-aligned
-	{
-		CUIRect ScaledButton = ScaleButtonRect(ClansButtonRect, s_ClansButtonScale);
-		static CButtonContainer s_ClansButton;
-		ColorRGBA BgColor(0.0f, 0.0f, 0.0f, 0.25f);
-		BgColor.a *= Ui()->ButtonColorMul(&s_ClansButton);
-		ScaledButton.Draw(BgColor, IGraphics::CORNER_ALL, 5.0f);
-
-		CUIRect Label = ScaledButton;
-		Label.HMargin(2.0f, &Label);
-		Ui()->DoLabel(&Label, Localize("Clans"), Label.h * CUi::ms_FontmodHeight, TEXTALIGN_MC);
-
-		if(Ui()->DoButtonLogic(&s_ClansButton, 0, &ScaledButton, BUTTONFLAG_LEFT) || CheckHotKey(KEY_C))
-			NewPage = CMenus::PAGE_CLANS;
-	}
-
-#if defined(CONF_AUTOUPDATE)
-	{
-		char aUpdateBuf[128] = "";
-		const IUpdater::EUpdaterState State = Updater()->GetCurrentState();
-		const bool NeedUpdate = Updater()->GetLatestVersionString()[0] != '\0';
-		const bool ShowDownloadButton = State == IUpdater::VERSION_AVAILABLE;
-		const bool ShowRetryButton = NeedUpdate && State == IUpdater::FAIL;
-		const bool ShowRestartButton = State == IUpdater::NEED_RESTART;
-		const bool ShowUpdateProgress = State == IUpdater::DOWNLOADING;
-
-		if(ShowDownloadButton || ShowRetryButton || ShowRestartButton || ShowUpdateProgress)
-		{
-			CUIRect UpdateRow = SettingsButton;
-			UpdateRow.y += SettingsButton.h + ButtonGap + ClansBtnH + ButtonGap;
-			UpdateRow.h = 22.0f;
-
-			CUIRect UpdateLabel, UpdateButton;
-			UpdateRow.VSplitRight(120.0f, &UpdateLabel, &UpdateButton);
-			UpdateLabel.VSplitRight(10.0f, &UpdateLabel, nullptr);
-
-			if(ShowDownloadButton)
-			{
-				str_format(aUpdateBuf, sizeof(aUpdateBuf), Localize("Gores Client %s is out!"), Updater()->GetLatestVersionString());
-				TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-			}
-			else if(ShowUpdateProgress)
-			{
-				if(State == IUpdater::GETTING_MANIFEST)
-					str_copy(aUpdateBuf, Localize("Preparing update..."));
-				else
-					str_format(aUpdateBuf, sizeof(aUpdateBuf), Localize("Downloading %d%%"), Updater()->GetCurrentPercent());
-			}
-			else if(ShowRetryButton)
-			{
-				str_copy(aUpdateBuf, Localize("Update failed"));
-				TextRender()->TextColor(1.0f, 0.4f, 0.4f, 1.0f);
-			}
-			else if(ShowRestartButton)
-			{
-				str_copy(aUpdateBuf, Localize("Update downloaded"));
-				TextRender()->TextColor(0.7f, 1.0f, 0.7f, 1.0f);
-			}
-
-			Ui()->DoLabel(&UpdateLabel, aUpdateBuf, 14.0f, TEXTALIGN_ML);
-			TextRender()->TextColor(TextRender()->DefaultTextColor());
-
-			if(ShowDownloadButton || ShowRetryButton)
-			{
-				static CButtonContainer s_MenuUpdateDownload;
-				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateDownload, Localize("Download"), 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-					Updater()->InitiateUpdate();
-			}
-			else if(ShowRestartButton)
-			{
-				static CButtonContainer s_MenuUpdateRestart;
-#if defined(CONF_PLATFORM_ANDROID)
-				const char *pRestartButtonLabel = Localize("Install");
-#else
-				const char *pRestartButtonLabel = Localize("Restart");
-#endif
-				if(GameClient()->m_Menus.DoButton_Menu(&s_MenuUpdateRestart, pRestartButtonLabel, 0, &UpdateButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)))
-					Updater()->ApplyUpdateAndRestart();
-			}
-			else
-			{
-				Ui()->RenderProgressBar(UpdateButton, Updater()->GetCurrentPercent() / 100.0f);
-			}
-		}
-	}
-#endif
-
-	// Quit вЂ” square icon button at bottom center
-	{
-		CUIRect QuitArea;
-		MainView.VMargin(VMargin, &QuitArea);
-		QuitArea.HSplitBottom(25.0f, &QuitArea, nullptr);
-		QuitArea.HSplitBottom(40.0f, &QuitArea, &Button);
-		CUIRect QuitButton = Button;
-		QuitButton.w = QuitButton.h;
-		QuitButton.x += (Button.w - QuitButton.w) / 2.0f;
-		static CButtonContainer s_QuitButton;
-		bool UsedEscape = false;
-		SetIconMode();
-		if(GameClient()->m_Menus.DoButton_Menu(&s_QuitButton, FontIcon::POWER_OFF, 0, &QuitButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, Rounding, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.25f)) || (UsedEscape = Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE)) || CheckHotKey(KEY_Q))
-		{
-			ResetIconMode();
-			if(g_Config.m_BcConfirmQuit || UsedEscape || GameClient()->Editor()->HasUnsavedData() || (GameClient()->CurrentRaceTime() / 60 >= g_Config.m_ClConfirmQuitTime && g_Config.m_ClConfirmQuitTime >= 0))
-				GameClient()->m_Menus.ShowQuitPopup();
-			else
-				Client()->Quit();
-		}
-		ResetIconMode();
-	}
-
-	// Version labels + console button (bottom right)
-	{
-		CUIRect CurVersion, ConsoleButton;
-		MainView.HSplitBottom(74.0f, nullptr, &CurVersion);
-		CurVersion.VSplitRight(40.0f, &CurVersion, nullptr);
-		CurVersion.HSplitTop(20.0f, &ConsoleButton, &CurVersion);
-		CurVersion.HSplitTop(5.0f, nullptr, &CurVersion);
-		ConsoleButton.VSplitRight(40.0f, nullptr, &ConsoleButton);
-
-		CUIRect VersionLine1, VersionLine2, VersionLine3;
-		CurVersion.HSplitTop(16.0f, &VersionLine1, &CurVersion);
-		CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
-		CurVersion.HSplitTop(16.0f, &VersionLine2, &CurVersion);
-		CurVersion.HSplitTop(2.0f, nullptr, &CurVersion);
-		CurVersion.HSplitTop(16.0f, &VersionLine3, &CurVersion);
-
-		char aDDNetBuf[64];
-		char aTClientBuf[64];
-		char aBestClientBuf[64];
-		str_format(aDDNetBuf, sizeof(aDDNetBuf), "DDNet %s", GAME_RELEASE_VERSION);
-		str_format(aTClientBuf, sizeof(aTClientBuf), "TClient %s", TCLIENT_VERSION);
-		str_format(aBestClientBuf, sizeof(aBestClientBuf), "Gores Client %s", BESTCLIENT_VERSION);
-		Ui()->DoLabel(&VersionLine1, aDDNetBuf, 14.0f, TEXTALIGN_MR);
-		Ui()->DoLabel(&VersionLine2, aTClientBuf, 14.0f, TEXTALIGN_MR);
-		Ui()->DoLabel(&VersionLine3, aBestClientBuf, 14.0f, TEXTALIGN_MR);
-
-		static CButtonContainer s_ConsoleButton;
-		SetIconMode();
-		if(GameClient()->m_Menus.DoButton_Menu(&s_ConsoleButton, FontIcon::TERMINAL, 0, &ConsoleButton, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 5.0f, 0.0f, ColorRGBA(0.0f, 0.0f, 0.0f, 0.1f)))
-			GameClient()->m_GameConsole.Toggle(CGameConsole::CONSOLETYPE_LOCAL);
-		ResetIconMode();
-	}
-
-	if(NewPage != -1)
-	{
-		GameClient()->m_Menus.SetShowStart(false);
-		GameClient()->m_Menus.SetMenuPage(NewPage);
-	}
+	CUIRect Bottom{MainView.x + MainView.w - 260, MainView.y + MainView.h - 35, 245, 24};
+	Bottom.Draw(ColorRGBA(0.02f, 0.02f, 0.03f, .58f), IGraphics::CORNER_ALL, 4.0f);
+	char aVersion[96];
+	str_format(aVersion, sizeof(aVersion), "Gores Client %s  ·  DDNet %s", BESTCLIENT_VERSION, GAME_RELEASE_VERSION);
+	Ui()->DoLabel(&Bottom, aVersion, 10.0f, TEXTALIGN_MC);
 }
 
 bool CMenusStart::CheckHotKey(int Key) const
 {
-	return !Input()->ShiftIsPressed() && !Input()->ModifierIsPressed() && !Input()->AltIsPressed() &&
-	       Input()->KeyPress(Key) &&
-	       !GameClient()->m_GameConsole.IsActive();
+	return !Input()->ShiftIsPressed() && !Input()->ModifierIsPressed() && !Input()->AltIsPressed() && Input()->KeyPress(Key) && !GameClient()->m_GameConsole.IsActive();
 }
