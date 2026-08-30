@@ -349,6 +349,7 @@ MACRO_CONFIG_INT(BcAutoMargin, bc_auto_margin, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG
 MACRO_CONFIG_INT(BcSnapTap, bc_snap_tap, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable Snap Tap for opposite left/right inputs")
 MACRO_CONFIG_INT(BcSnapTapDelay, bc_snap_tap_delay, 0, 0, 200, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Snap Tap direction switch delay in milliseconds (0 = off)")
 MACRO_CONFIG_INT(BcSnapTapSmartStop, bc_snap_tap_smart_stop, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable physics-aware counter-strafing for Gores Snap Tap")
+MACRO_CONFIG_INT(BcSnapTapReleaseStop, bc_snap_tap_release_stop, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Enable physics-aware automatic braking when releasing the last Gores movement key")
 
 // Browser Utils
 MACRO_CONFIG_INT(BcAutoServerListRefresh, bc_auto_server_list_refresh, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Automatically refresh the server browser list while a browser tab is open")

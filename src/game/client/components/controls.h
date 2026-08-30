@@ -69,8 +69,24 @@ public:
 		int m_Direction = 0;
 		uint64_t m_PhysicsFingerprint = 0;
 	};
+	struct SReleaseStopState
+	{
+		uint64_t m_ArmSerial = 0;
+		int m_ReleasedDirection = 0;
+	};
+	struct SReleaseStopDecisionCache
+	{
+		bool m_Valid = false;
+		uint64_t m_InputSerial = 0;
+		int m_DecisionTick = 0;
+		int m_ReleasedDirection = 0;
+		int m_Direction = 0;
+		uint64_t m_PhysicsFingerprint = 0;
+	};
 	SSmartInputEventState m_aSmartInputEvent[NUM_DUMMIES];
 	SSmartDecisionCache m_aSmartDecisionCache[NUM_DUMMIES];
+	SReleaseStopState m_aReleaseStopState[NUM_DUMMIES];
+	SReleaseStopDecisionCache m_aReleaseStopDecisionCache[NUM_DUMMIES];
 
 	CControls();
 	int Sizeof() const override { return sizeof(*this); }
@@ -102,6 +118,9 @@ private:
 	void UpdateSmartInputEvent(int Dummy, int Direction, bool Held);
 	bool IsSmartStopActive() const;
 	int ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed, int ClassicDirection);
+	bool IsReleaseStopActive() const;
+	void CancelReleaseStop(int Dummy);
+	int ResolveReleaseStopDirection(int Dummy);
 	static void ConKeyInputState(IConsole::IResult *pResult, void *pUserData);
 	static void ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData);
 	static void ConKeyInputSet(IConsole::IResult *pResult, void *pUserData);

@@ -60,12 +60,16 @@ void CControls::ResetInput(int Dummy)
 	m_aSnapTapPrevRight[Dummy] = 0;
 	m_aSmartInputEvent[Dummy] = {};
 	m_aSmartDecisionCache[Dummy] = {};
+	m_aReleaseStopState[Dummy] = {};
+	m_aReleaseStopDecisionCache[Dummy] = {};
 }
 
 void CControls::OnPlayerDeath()
 {
 	for(int &AmmoCount : m_aAmmoCount)
 		AmmoCount = 0;
+	for(int Dummy = 0; Dummy < NUM_DUMMIES; Dummy++)
+		CancelReleaseStop(Dummy);
 }
 
 struct CInputState
@@ -516,6 +520,18 @@ bool CControls::IsSmartStopActive() const
 	       g_Config.m_BcInputs == BC_INPUTS_GORES && GameClient()->IsGoresInputMode();
 }
 
+bool CControls::IsReleaseStopActive() const
+{
+	return IsSnapTapActive() && g_Config.m_BcSnapTapReleaseStop != 0 &&
+	       g_Config.m_BcInputs == BC_INPUTS_GORES && GameClient()->IsGoresInputMode();
+}
+
+void CControls::CancelReleaseStop(int Dummy)
+{
+	m_aReleaseStopState[Dummy] = {};
+	m_aReleaseStopDecisionCache[Dummy] = {};
+}
+
 void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 {
 	SSmartInputEventState &State = m_aSmartInputEvent[Dummy];
@@ -525,10 +541,12 @@ void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 
 	const bool OtherHeld = Direction < 0 ? State.m_RightHeld : State.m_LeftHeld;
 	const bool WasOnlyOtherHeld = OtherHeld && !Current;
+	const bool WasOnlyCurrentHeld = Current && !OtherHeld;
 	Current = Held;
 	State.m_Serial++;
 	if(Held)
 	{
+		CancelReleaseStop(Dummy);
 		State.m_LatestPressedDirection = Direction;
 		if(WasOnlyOtherHeld && IsSmartStopActive() && m_aSnapTapAppliedDirection[Dummy] == -Direction)
 		{
@@ -536,15 +554,72 @@ void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 			State.m_RequestedDirection = Direction;
 		}
 	}
+	else if(WasOnlyCurrentHeld && IsReleaseStopActive())
+	{
+		m_aReleaseStopState[Dummy].m_ArmSerial = State.m_Serial;
+		m_aReleaseStopState[Dummy].m_ReleasedDirection = Direction;
+		m_aReleaseStopDecisionCache[Dummy].m_Valid = false;
+	}
 
-	// A release never creates ownership. It only cancels an in-flight brake when either
-	// participant is no longer held; a later genuine opposite press can arm a new one.
+	// A release never creates Smart Counter-Strafe ownership. It only cancels that gesture
+	// when either participant is no longer held; a later genuine opposite press can arm it.
 	if(!State.m_LeftHeld || !State.m_RightHeld)
 	{
 		State.m_ArmSerial = 0;
 		State.m_RequestedDirection = 0;
 	}
 	m_aSmartDecisionCache[Dummy].m_Valid = false;
+}
+
+int CControls::ResolveReleaseStopDirection(int Dummy)
+{
+	SReleaseStopState &Release = m_aReleaseStopState[Dummy];
+	if(Release.m_ArmSerial == 0 || Release.m_ReleasedDirection == 0)
+		return 0;
+	if(!IsReleaseStopActive())
+	{
+		CancelReleaseStop(Dummy);
+		return 0;
+	}
+
+	CGameClient::SGoresSmartStopContext Context;
+	if(!GameClient()->TryGetGoresSmartStopContext(Context))
+	{
+		CancelReleaseStop(Dummy);
+		return 0;
+	}
+
+	SReleaseStopDecisionCache &Cache = m_aReleaseStopDecisionCache[Dummy];
+	if(Cache.m_Valid && Cache.m_InputSerial == m_aSmartInputEvent[Dummy].m_Serial &&
+		Cache.m_DecisionTick == Context.m_DecisionTick &&
+		Cache.m_ReleasedDirection == Release.m_ReleasedDirection &&
+		Cache.m_PhysicsFingerprint == Context.m_PhysicsFingerprint)
+		return Cache.m_Direction;
+
+	const float Epsilon = 1.0f / 256.0f;
+	const float Velocity = Context.m_VelX;
+	if(std::abs(Velocity) <= Epsilon || Velocity * Release.m_ReleasedDirection <= Epsilon)
+	{
+		CancelReleaseStop(Dummy);
+		return 0;
+	}
+
+	const int BrakeDirection = -Release.m_ReleasedDirection;
+	const float NeutralVelocity = Velocity * Context.m_Friction;
+	const float BrakeVelocity = SaturatedAdd(-Context.m_ControlSpeed, Context.m_ControlSpeed,
+		Velocity, BrakeDirection * Context.m_ControlAccel);
+	int Resolved = 0;
+	const bool CrossesZero = BrakeVelocity * BrakeDirection > Epsilon;
+	if(!CrossesZero && std::abs(BrakeVelocity) + Epsilon < std::abs(NeutralVelocity))
+		Resolved = BrakeDirection;
+
+	Cache.m_Valid = true;
+	Cache.m_InputSerial = m_aSmartInputEvent[Dummy].m_Serial;
+	Cache.m_DecisionTick = Context.m_DecisionTick;
+	Cache.m_ReleasedDirection = Release.m_ReleasedDirection;
+	Cache.m_Direction = Resolved;
+	Cache.m_PhysicsFingerprint = Context.m_PhysicsFingerprint;
+	return Resolved;
 }
 
 int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed, int ClassicDirection)
@@ -629,6 +704,10 @@ int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightP
 	if(IsSnapTapActive() || !UseGammaInputMovement())
 	{
 		const int ClassicDirection = ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
+		if(!LeftPressed && !RightPressed)
+			return ResolveReleaseStopDirection(Dummy);
+		if(!IsReleaseStopActive())
+			CancelReleaseStop(Dummy);
 		if(IsSmartStopActive())
 			return ResolveSmartStopDirection(Dummy, LeftPressed, RightPressed, ClassicDirection);
 		return ClassicDirection;
