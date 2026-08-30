@@ -718,7 +718,7 @@ public:
 	const IGraphics::CTextureHandle &BcLogoTexture() const { return m_BcLogoTexture; }
 	// Shared settings renderer used by the start-menu drawer. This deliberately
 	// keeps all controls bound to the regular settings implementation.
-	void RenderSettingsInStartDrawer(CUIRect View) { RenderSettings(View); }
+	void RenderSettingsInStartDrawer(CUIRect View);
 
 	void RenderBackground();
 
@@ -918,6 +918,7 @@ public:
 	void JoinTutorial();
 
 private:
+	float m_PageRevealProgress = 1.0f;
 	CCommunityIcons m_CommunityIcons;
 	CMenusIngameTouchControls m_MenusIngameTouchControls;
 	friend CMenusIngameTouchControls;
@@ -933,6 +934,7 @@ private:
 
 	// found in menus_settings.cpp
 	void RenderSettingsDDNet(CUIRect MainView);
+	void RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground);
 	void RenderSettingsAppearance(CUIRect MainView);
 
 	// found in menus_bestclient.cpp

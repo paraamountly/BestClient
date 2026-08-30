@@ -1009,6 +1009,86 @@ bool CMenus::RenderLanguageSelection(CUIRect MainView)
 	return s_ListBox.WasItemActivated();
 }
 
+void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground)
+{
+	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
+		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
+	if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
+		g_Config.m_UiSettingsPage = SETTINGS_TEE;
+
+	auto SetBackground = [&](int Position) {
+		if(ChangeBackground)
+			GameClient()->m_MenuBackground.ChangePosition(Position);
+	};
+	if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_GENERAL);
+		RenderSettingsGeneral(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_TEE);
+		Client()->IsSixup() ? RenderSettingsTee7(MainView) : RenderSettingsTee(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_APPEARANCE);
+		RenderSettingsAppearance(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_CONTROLS);
+		m_MenusSettingsControls.Render(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_GRAPHICS);
+		RenderSettingsGraphics(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_SOUND);
+		RenderSettingsSound(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_DDNET);
+		RenderSettingsDDNet(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_ASSETS);
+		RenderSettingsCustom(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT)
+	{
+		SetBackground(13);
+		RenderSettingsTClient(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
+	{
+		SetBackground(14);
+		RenderSettingsTClientProfiles(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
+	{
+		SetBackground(15);
+		RenderSettingsTClientConfigs(MainView);
+	}
+	else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
+	{
+		SetBackground(CMenuBackground::POS_SETTINGS_RESERVED0);
+		RenderSettingsBestClient(MainView);
+	}
+	else
+		dbg_assert_failed("ui_settings_page invalid");
+}
+
+void CMenus::RenderSettingsInStartDrawer(CUIRect View)
+{
+	RenderSettingsPageContent(View, false);
+}
+
 void CMenus::RenderSettings(CUIRect MainView)
 {
 	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
@@ -1025,7 +1105,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		return;
 	}
 
-	#if 0
+#if 0
 		const bool NeedRestart = m_NeedRestartGraphics || m_NeedRestartSound || m_NeedRestartUpdate;
 
 		auto RenderSettingsPage = [&](CUIRect PageView) {
@@ -1298,7 +1378,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 		if(NeedRestart)
 			RenderRestartWarning(RestartBar);
 		return;
-	#endif
+#endif
 
 	// render background
 	CUIRect Button, TabBar, RestartBar;
@@ -1349,83 +1429,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			g_Config.m_UiSettingsPage = i;
 	}
 
-	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_LANGUAGE);
-		RenderLanguageSettings(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GENERAL);
-		RenderSettingsGeneral(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_PLAYER)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_PLAYER);
-		RenderSettingsPlayer(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_TEE);
-		if(Client()->IsSixup())
-			RenderSettingsTee7(MainView);
-		else
-			RenderSettingsTee(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_APPEARANCE);
-		RenderSettingsAppearance(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_CONTROLS);
-		m_MenusSettingsControls.Render(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_GRAPHICS);
-		RenderSettingsGraphics(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_SOUND);
-		RenderSettingsSound(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_DDNET)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_DDNET);
-		RenderSettingsDDNet(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_ASSETS)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_ASSETS);
-		RenderSettingsCustom(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_TCLIENT)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(13);
-		RenderSettingsTClient(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_PROFILES)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(14);
-		RenderSettingsTClientProfiles(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_CONFIGS)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(15);
-		RenderSettingsTClientConfigs(MainView);
-	}
-	else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
-	{
-		GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_SETTINGS_RESERVED0);
-		RenderSettingsBestClient(MainView);
-	}
-	else
-	{
-		dbg_assert_failed("ui_settings_page invalid");
-	}
+	RenderSettingsPageContent(MainView, true);
 
 	if(NeedRestart)
 	{
@@ -1453,7 +1457,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			}
 			else
 #endif
-			if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
+				if(Client()->State() == IClient::STATE_ONLINE || GameClient()->Editor()->HasUnsavedData())
 			{
 				m_Popup = POPUP_RESTART;
 			}

@@ -660,7 +660,7 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 		static CButtonContainer s_StartButton;
 		if(DoButton_MenuTab(&s_StartButton, pHomeScreenButtonLabel, false, &Button, IGraphics::CORNER_T, &m_aAnimatorsSmallPage[SMALL_TAB_HOME], pHomeButtonColor, pHomeButtonColor, pHomeButtonColorHover, 10.0f))
 		{
-			m_ShowStart = true;
+			SetShowStart(true);
 		}
 		GameClient()->m_Tooltips.DoToolTip(&s_StartButton, &Button, Localize("Main menu"));
 
@@ -727,8 +727,8 @@ void CMenus::RenderMenubar(CUIRect Box, IClient::EClientState ClientState)
 			Box.VSplitLeft(BrowserButtonWidth, &Button, &Box);
 			const int Page = PAGE_FAVORITE_COMMUNITY_1 + FavoriteCommunityIndex;
 			const bool IsLastVisibleCommunity = FavoriteCommunityIndex + 1 >= ServerBrowser()->FavoriteCommunities().size() ||
-				FavoriteCommunityIndex + 1 >= std::size(s_aFavoriteCommunityButtons) ||
-				Box.w < BrowserButtonWidth;
+							    FavoriteCommunityIndex + 1 >= std::size(s_aFavoriteCommunityButtons) ||
+							    Box.w < BrowserButtonWidth;
 			const int CommunityCorners = IsLastVisibleCommunity ? IGraphics::CORNER_TR : IGraphics::CORNER_NONE;
 			if(DoButton_MenuTab(&s_aFavoriteCommunityButtons[FavoriteCommunityIndex], FontIcon::ELLIPSIS, ActivePage == Page, &Button, CommunityCorners, &m_aAnimatorsBigPage[BIT_TAB_FAVORITE_COMMUNITY_1 + FavoriteCommunityIndex], nullptr, nullptr, nullptr, BrowserTabRounding, m_CommunityIcons.Find(pCommunity->Id()), false, IGraphics::CORNER_T, BrowserTabHoverRounding))
 			{
@@ -1230,8 +1230,8 @@ void CMenus::Render()
 	// value while connected, so checking it in-game would wrongly keep
 	// refreshing on every other menu page.
 	const bool BrowserPageActive = (Client()->State() == IClient::STATE_OFFLINE &&
-		m_MenuPage >= PAGE_INTERNET && m_MenuPage <= PAGE_FAVORITE_COMMUNITY_5) ||
-		(Client()->State() == IClient::STATE_ONLINE && m_GamePage == PAGE_NETWORK);
+					       m_MenuPage >= PAGE_INTERNET && m_MenuPage <= PAGE_FAVORITE_COMMUNITY_5) ||
+				       (Client()->State() == IClient::STATE_ONLINE && m_GamePage == PAGE_NETWORK);
 	if(BrowserPageActive && g_Config.m_BcAutoServerListRefresh)
 	{
 		const bool BrowserBusy = ServerBrowser()->IsRefreshing() || ServerBrowser()->IsGettingServerlist();
@@ -1345,7 +1345,7 @@ void CMenus::Render()
 			// The fullscreen assets editor exit confirmation covers the whole
 			// screen; the tab bar must not draw on top of it.
 			const bool AssetsEditorConfirmOpen = m_AssetsEditorState.m_VisualsEditorOpen &&
-				m_AssetsEditorState.m_FullscreenOpen && m_AssetsEditorState.m_ShowExitConfirm;
+							     m_AssetsEditorState.m_FullscreenOpen && m_AssetsEditorState.m_ShowExitConfirm;
 			if(!AssetsEditorConfirmOpen)
 				RenderMenubar(TabBar, ClientState);
 		}
@@ -1406,7 +1406,7 @@ void CMenus::Render()
 			// The fullscreen assets editor exit confirmation covers the whole
 			// screen; the tab bar must not draw on top of it.
 			const bool AssetsEditorConfirmOpen = m_AssetsEditorState.m_VisualsEditorOpen &&
-				m_AssetsEditorState.m_FullscreenOpen && m_AssetsEditorState.m_ShowExitConfirm;
+							     m_AssetsEditorState.m_FullscreenOpen && m_AssetsEditorState.m_ShowExitConfirm;
 			if(!AssetsEditorConfirmOpen)
 				RenderMenubar(TabBar, ClientState);
 		}
@@ -1425,6 +1425,18 @@ void CMenus::Render()
 		break;
 	}
 
+	// Destination-side half of the start-menu crossfade. The handoff frame is
+	// covered and the selected page is then revealed without shaders.
+	if(ClientState == IClient::STATE_OFFLINE && !m_ShowStart && m_PageRevealProgress < 1.0f)
+	{
+		constexpr float PageRevealDuration = 0.20f;
+		constexpr float AnimationSpeedBase = 12.0f;
+		const float SpeedScale = std::max(0.01f, (float)g_Config.m_BcMainMenuAnimationSpeed / AnimationSpeedBase);
+		m_PageRevealProgress = g_Config.m_BcMainMenuAnimation ? std::min(1.0f, m_PageRevealProgress + Client()->RenderFrameTime() * SpeedScale / PageRevealDuration) : 1.0f;
+		const float Fade = 1.0f - m_PageRevealProgress;
+		Screen.Draw(ColorRGBA(0.0f, 0.0f, 0.0f, Fade * 0.72f), IGraphics::CORNER_NONE, 0.0f);
+	}
+
 	Ui()->RenderPopupMenus();
 
 	// Prevent UI elements from being hovered while a key reader is active
@@ -1436,7 +1448,7 @@ void CMenus::Render()
 	// Handle this escape hotkey after popup menus
 	if(!m_ShowStart && ClientState == IClient::STATE_OFFLINE && Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
 	{
-		m_ShowStart = true;
+		SetShowStart(true);
 	}
 }
 
@@ -2819,7 +2831,7 @@ void CMenus::OnRender()
 	const int CurAspectNum = g_Config.m_BcCustomAspectRatioNum;
 	const int CurAspectDen = g_Config.m_BcCustomAspectRatioDen;
 	const bool AspectConfirmNeeded = CurAspectApplyMode == 1 &&
-		(CurAspectMode > 0 || (CurAspectMode < 0 && CurAspectRatio > 0));
+					 (CurAspectMode > 0 || (CurAspectMode < 0 && CurAspectRatio > 0));
 	constexpr int ASPECT_CONFIRM_SECONDS = 10;
 
 	auto ResetAspectToPrevious = [&]() {
@@ -2857,7 +2869,7 @@ void CMenus::OnRender()
 	{
 		const bool WasConfirmActive = s_AspectConfirmActive;
 		const bool DiffersFromPrev = CurAspectMode != s_AspectPrevMode || CurAspectRatio != s_AspectPrevRatio ||
-			CurAspectApplyMode != s_AspectPrevApplyMode || CurAspectNum != s_AspectPrevNum || CurAspectDen != s_AspectPrevDen;
+					     CurAspectApplyMode != s_AspectPrevApplyMode || CurAspectNum != s_AspectPrevNum || CurAspectDen != s_AspectPrevDen;
 		if(AspectConfirmNeeded && DiffersFromPrev)
 		{
 			if(!WasConfirmActive)
@@ -2988,7 +3000,7 @@ void CMenus::OnRender()
 
 		auto RenderOverlayBtn = [&](const CUIRect &Rect, const char *pText, ColorRGBA Normal, ColorRGBA Hovered) -> bool {
 			const bool Hover = RealMouse.x >= Rect.x && RealMouse.x < Rect.x + Rect.w &&
-				RealMouse.y >= Rect.y && RealMouse.y < Rect.y + Rect.h;
+					   RealMouse.y >= Rect.y && RealMouse.y < Rect.y + Rect.h;
 			Graphics()->DrawRect(Rect.x, Rect.y, Rect.w, Rect.h, Hover ? Hovered : Normal, IGraphics::CORNER_ALL, 3.0f);
 			Ui()->DoLabel(&Rect, pText, 10.5f, TEXTALIGN_MC);
 			return Hover && Ui()->MouseButtonClicked(0);
@@ -3249,6 +3261,10 @@ void CMenus::ForceRefreshLanPage()
 
 void CMenus::SetShowStart(bool ShowStart)
 {
+	if(ShowStart && !m_ShowStart)
+		m_MenusStart.OnShowStart();
+	else if(!ShowStart && m_ShowStart)
+		m_PageRevealProgress = g_Config.m_BcMainMenuAnimation ? 0.0f : 1.0f;
 	m_ShowStart = ShowStart;
 }
 

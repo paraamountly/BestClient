@@ -11,6 +11,7 @@ class CMenusStart : public CComponentInterfaces
 {
 public:
 	void RenderStartMenu(CUIRect MainView);
+	void OnShowStart();
 	enum class EState
 	{
 		MAIN,
@@ -36,7 +37,7 @@ private:
 	} m_Interaction;
 
 	void BeginTransition(EState Target, int PendingPage = -1);
-	void UpdateAnimations();
+	bool UpdateAnimations();
 	void RenderMainStrip(CUIRect MainView, float Visibility, bool InputEnabled);
 	void RenderCenterLogo(CUIRect MainView, float Visibility);
 	void RenderTopUtilityBar(CUIRect MainView, bool InputEnabled);
@@ -46,6 +47,7 @@ private:
 	void RenderDimmer(CUIRect MainView, float Alpha);
 	void HandleEscape();
 	bool CheckHotKey(int Key) const;
+	float m_EntranceProgress = 1.0f;
 };
 
 #endif

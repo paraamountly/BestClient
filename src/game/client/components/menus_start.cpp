@@ -33,6 +33,8 @@ namespace
 	constexpr float SUBMENU_DURATION = 0.22f;
 	constexpr float DRAWER_DURATION = 0.25f;
 	constexpr float PAGE_TRANSITION_DURATION = 0.30f;
+	constexpr float ENTRANCE_DURATION = 0.28f;
+	constexpr float ANIMATION_SPEED_BASE = 12.0f;
 
 	float EaseOutCubic(float T) { return 1.0f - std::pow(1.0f - T, 3.0f); }
 	float EaseInOutCubic(float T) { return T < 0.5f ? 4.0f * T * T * T : 1.0f - std::pow(-2.0f * T + 2.0f, 3.0f) / 2.0f; }
@@ -64,18 +66,18 @@ void CMenusStart::BeginTransition(EState Target, int PendingPage)
 	m_Interaction.m_PendingPage = PendingPage;
 }
 
-void CMenusStart::UpdateAnimations()
+bool CMenusStart::UpdateAnimations()
 {
 	if(m_Interaction.m_Progress >= 1.0f)
-		return;
+		return false;
 	float Duration = SUBMENU_DURATION;
 	if(m_Interaction.m_Target == EState::SETTINGS_DRAWER || m_Interaction.m_Target == EState::TOP_POPOVER || m_Interaction.m_Target == EState::RIGHT_DRAWER || m_Interaction.m_Previous == EState::SETTINGS_DRAWER || m_Interaction.m_Previous == EState::TOP_POPOVER || m_Interaction.m_Previous == EState::RIGHT_DRAWER)
 		Duration = DRAWER_DURATION;
 	else if(m_Interaction.m_Target == EState::PAGE_TRANSITION)
 		Duration = PAGE_TRANSITION_DURATION;
 
-	const float Speed = std::max(0.1f, (float)g_Config.m_BcMainMenuAnimationSpeed);
-	m_Interaction.m_Progress = g_Config.m_BcMainMenuAnimation ? std::min(1.0f, m_Interaction.m_Progress + Client()->RenderFrameTime() * Speed / Duration) : 1.0f;
+	const float SpeedScale = std::max(0.01f, (float)g_Config.m_BcMainMenuAnimationSpeed / ANIMATION_SPEED_BASE);
+	m_Interaction.m_Progress = g_Config.m_BcMainMenuAnimation ? std::min(1.0f, m_Interaction.m_Progress + Client()->RenderFrameTime() * SpeedScale / Duration) : 1.0f;
 	if(m_Interaction.m_Progress == 1.0f)
 	{
 		m_Interaction.m_Current = m_Interaction.m_Target;
@@ -84,8 +86,16 @@ void CMenusStart::UpdateAnimations()
 			GameClient()->m_Menus.SetMenuPage(m_Interaction.m_PendingPage);
 			GameClient()->m_Menus.SetShowStart(false);
 			m_Interaction = {};
+			return true;
 		}
 	}
+	return false;
+}
+
+void CMenusStart::OnShowStart()
+{
+	m_Interaction = {};
+	m_EntranceProgress = g_Config.m_BcMainMenuAnimation ? 0.0f : 1.0f;
 }
 
 void CMenusStart::RenderDimmer(CUIRect MainView, float Alpha)
@@ -128,16 +138,18 @@ void CMenusStart::RenderMainStrip(CUIRect MainView, float Visibility, bool Input
 	CUIRect Strip{MainView.x, CenterY - StripH / 2, MainView.w, StripH};
 	Strip.Draw(ColorRGBA(0.025f, 0.022f, 0.035f, 0.80f * Visibility), IGraphics::CORNER_NONE, 0.0f);
 
-	auto DrawSegment = [&](const void *pId, CUIRect Rect, const char *pIcon, const char *pLabel, ColorRGBA Color, float &Hover, bool Enabled) {
+	auto DrawSegment = [&](const void *pId, CUIRect Rect, const char *pIcon, const char *pLabel, ColorRGBA Color, float &Hover, bool Enabled, float Opacity) {
 		const bool Hovered = Enabled && Ui()->MouseHovered(&Rect);
-		const float Step = g_Config.m_BcMainMenuAnimation ? Client()->RenderFrameTime() * std::max(0.1f, (float)g_Config.m_BcMainMenuAnimationSpeed) / HOVER_DURATION : 1.0f;
+		const float SpeedScale = std::max(0.01f, (float)g_Config.m_BcMainMenuAnimationSpeed / ANIMATION_SPEED_BASE);
+		const float Step = g_Config.m_BcMainMenuAnimation ? Client()->RenderFrameTime() * SpeedScale / HOVER_DURATION : 1.0f;
 		Hover += (Hovered ? 1.0f : -1.0f) * Step;
 		Hover = std::clamp(Hover, 0.0f, 1.0f);
 		const float Expand = Rect.w * HOVER_EXPANSION * EaseOutCubic(Hover);
 		Rect.x -= Expand / 2;
 		Rect.w += Expand;
 		Color = Mix(Color, ColorRGBA(std::min(1.0f, Color.r + .15f), std::min(1.0f, Color.g + .15f), std::min(1.0f, Color.b + .15f), Color.a), Hover);
-		Color.a *= Visibility;
+		const float VisualAlpha = Visibility * Opacity;
+		Color.a *= VisualAlpha;
 		Graphics()->TextureClear();
 		Graphics()->QuadsBegin();
 		Graphics()->SetColor(Color);
@@ -146,17 +158,24 @@ void CMenusStart::RenderMainStrip(CUIRect MainView, float Visibility, bool Input
 		Graphics()->QuadsEnd();
 		CUIRect Icon, Label;
 		Rect.HSplitTop(Rect.h * .58f, &Icon, &Label);
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, VisualAlpha);
 		TextRender()->SetFontPreset(EFontPreset::ICON_FONT);
 		Ui()->DoLabel(&Icon, pIcon, 20.0f + Hover * 1.5f, TEXTALIGN_MC);
 		TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
 		Ui()->DoLabel(&Label, pLabel, 10.0f + Hover, TEXTALIGN_MC);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
 		return Enabled && Ui()->DoButtonLogic(pId, 0, &Rect, BUTTONFLAG_LEFT);
 	};
 
 	const bool Stable = m_Interaction.m_Progress >= 1.0f;
 	EState ShownState = m_Interaction.m_Current;
 	float SubmenuAmount = IsSubmenu(ShownState) ? 1.0f : 0.0f;
-	if(m_Interaction.m_Progress < 1.0f && (IsSubmenu(m_Interaction.m_Previous) || IsSubmenu(m_Interaction.m_Target)))
+	if(m_Interaction.m_Target == EState::PAGE_TRANSITION && IsSubmenu(m_Interaction.m_Previous))
+	{
+		ShownState = m_Interaction.m_Previous;
+		SubmenuAmount = 1.0f;
+	}
+	else if(m_Interaction.m_Progress < 1.0f && (IsSubmenu(m_Interaction.m_Previous) || IsSubmenu(m_Interaction.m_Target)))
 	{
 		ShownState = IsSubmenu(m_Interaction.m_Target) ? m_Interaction.m_Target : m_Interaction.m_Previous;
 		SubmenuAmount = IsSubmenu(m_Interaction.m_Target) ? EaseOutCubic(m_Interaction.m_Progress) : 1.0f - EaseInOutCubic(m_Interaction.m_Progress);
@@ -165,18 +184,20 @@ void CMenusStart::RenderMainStrip(CUIRect MainView, float Visibility, bool Input
 	const float GroupW = std::min(SEGMENT_MAX_GROUP_WIDTH, MainView.w - AnchorX - LogoD * .52f - 20.0f);
 	const float StartX = AnchorX + LogoD * .48f;
 	static CButtonContainer s_aPrimary[5];
-	if(MainAmount > 0.01f)
+	// Settings is independent of the right category morph and remains anchored.
+	CUIRect Settings{AnchorX - LogoD * .48f - SEGMENT_WIDTH, Strip.y, SEGMENT_WIDTH, Strip.h};
+	if(DrawSegment(&s_aPrimary[0], Settings, FontIcon::GEAR, Localize("Settings"), COLOR_SETTINGS, m_Interaction.m_aPrimaryHover[0], InputEnabled && Stable, 1.0f))
+		BeginTransition(EState::SETTINGS_DRAWER);
+	if(MainAmount > 0.001f)
 	{
-		CUIRect Settings{AnchorX - LogoD * .48f - SEGMENT_WIDTH, Strip.y, SEGMENT_WIDTH, Strip.h};
-		if(DrawSegment(&s_aPrimary[0], Settings, FontIcon::GEAR, Localize("Settings"), COLOR_SETTINGS, m_Interaction.m_aPrimaryHover[0], InputEnabled && Stable && ShownState == EState::MAIN))
-			BeginTransition(EState::SETTINGS_DRAWER);
 		const char *apIcons[] = {FontIcon::PLAY, FontIcon::PEN_TO_SQUARE, FontIcon::EARTH_AMERICAS, FontIcon::POWER_OFF};
 		const char *apLabels[] = {Localize("Play", "Start menu"), Localize("Editor"), Localize("Browse"), Localize("Exit")};
 		const ColorRGBA aColors[] = {COLOR_PLAY, COLOR_EDITOR, COLOR_BROWSE, COLOR_EXIT};
 		for(int i = 0; i < 4; ++i)
 		{
-			CUIRect R{StartX + GroupW / 4 * i, Strip.y, GroupW / 4, Strip.h};
-			if(DrawSegment(&s_aPrimary[i + 1], R, apIcons[i], apLabels[i], aColors[i], m_Interaction.m_aPrimaryHover[i + 1], InputEnabled && Stable && ShownState == EState::MAIN))
+			const float FinalW = GroupW / 4;
+			CUIRect R{StartX + FinalW * i * MainAmount, Strip.y, FinalW * MainAmount, Strip.h};
+			if(DrawSegment(&s_aPrimary[i + 1], R, apIcons[i], apLabels[i], aColors[i], m_Interaction.m_aPrimaryHover[i + 1], InputEnabled && Stable && ShownState == EState::MAIN, MainAmount))
 			{
 				if(i == 0)
 					BeginTransition(EState::PLAY_SUBMENU);
@@ -191,7 +212,7 @@ void CMenusStart::RenderMainStrip(CUIRect MainView, float Visibility, bool Input
 			}
 		}
 	}
-	if(SubmenuAmount > 0.01f)
+	if(SubmenuAmount > 0.001f)
 	{
 		const char *apLabels[4] = {};
 		const char *apIcons[4] = {};
@@ -236,7 +257,7 @@ void CMenusStart::RenderMainStrip(CUIRect MainView, float Visibility, bool Input
 		{
 			const float W = GroupW / Count;
 			CUIRect R{StartX + (W * i - GroupW * .08f) * SubmenuAmount, Strip.y, W * SubmenuAmount, Strip.h};
-			if(DrawSegment(&s_aSubmenu[i], R, apIcons[i], apLabels[i], Color, m_Interaction.m_aSubmenuHover[i], InputEnabled && Stable && IsSubmenu(ShownState)))
+			if(DrawSegment(&s_aSubmenu[i], R, apIcons[i], apLabels[i], Color, m_Interaction.m_aSubmenuHover[i], InputEnabled && Stable && IsSubmenu(ShownState), SubmenuAmount))
 			{
 				if(i == Count - 1)
 					BeginTransition(EState::MAIN);
@@ -282,7 +303,7 @@ void CMenusStart::RenderSettingsDrawer(CUIRect MainView, float Progress)
 	CUIRect Drawer{MainView.x - W * (1.0f - Progress), MainView.y, W, MainView.h};
 	Drawer.Draw(ColorRGBA(0.075f, 0.065f, 0.105f, 0.99f), IGraphics::CORNER_NONE, 0.0f);
 	CUIRect Rail, Content;
-	Drawer.VSplitLeft(58.0f, &Rail, &Content);
+	Drawer.VSplitLeft(std::clamp(W * .25f, 86.0f, 118.0f), &Rail, &Content);
 	Rail.Draw(ColorRGBA(0.035f, 0.03f, 0.055f, 1.0f), IGraphics::CORNER_NONE, 0.0f);
 	CUIRect Back{Rail.x + 8, Rail.y + 12, Rail.w - 16, 38};
 	static CButtonContainer s_Back;
@@ -290,12 +311,34 @@ void CMenusStart::RenderSettingsDrawer(CUIRect MainView, float Progress)
 	if(Progress >= 1.0f && GameClient()->m_Menus.DoButton_Menu(&s_Back, FontIcon::CHEVRON_LEFT, 0, &Back, BUTTONFLAG_LEFT))
 		BeginTransition(EState::MAIN);
 	TextRender()->SetFontPreset(EFontPreset::DEFAULT_FONT);
+	const char *apLabels[] = {"General", "Tee", "Appearance", "Controls", "Graphics", "Sound", "DDNet", "Assets", "TClient", "Gores", "Profiles", "Configs"};
+	const int aPages[] = {CMenus::SETTINGS_GENERAL, CMenus::SETTINGS_TEE, CMenus::SETTINGS_APPEARANCE, CMenus::SETTINGS_CONTROLS, CMenus::SETTINGS_GRAPHICS, CMenus::SETTINGS_SOUND, CMenus::SETTINGS_DDNET, CMenus::SETTINGS_ASSETS, CMenus::SETTINGS_TCLIENT, CMenus::SETTINGS_BESTCLIENT, CMenus::SETTINGS_PROFILES, CMenus::SETTINGS_CONFIGS};
+	static CButtonContainer s_aNavigation[std::size(aPages)];
+	for(size_t i = 0; i < std::size(aPages); ++i)
+	{
+		CUIRect Item{Rail.x + 5.0f, Rail.y + 60.0f + i * 31.0f, Rail.w - 10.0f, 27.0f};
+		if(Progress < 1.0f)
+		{
+			TextRender()->TextColor(1.0f, 1.0f, 1.0f, Progress);
+			Ui()->DoLabel(&Item, Localize(apLabels[i]), 9.0f, TEXTALIGN_MC);
+			TextRender()->TextColor(TextRender()->DefaultTextColor());
+		}
+		else if(GameClient()->m_Menus.DoButton_Menu(&s_aNavigation[i], Localize(apLabels[i]), g_Config.m_UiSettingsPage == aPages[i], &Item, BUTTONFLAG_LEFT, nullptr, IGraphics::CORNER_ALL, 3.0f))
+			g_Config.m_UiSettingsPage = aPages[i];
+	}
 	Content.Margin(10.0f, &Content);
 	if(Progress >= 1.0f)
 	{
 		Ui()->ClipEnable(&Content);
 		GameClient()->m_Menus.RenderSettingsInStartDrawer(Content);
 		Ui()->ClipDisable();
+	}
+	else
+	{
+		Content.x -= 12.0f * (1.0f - Progress);
+		TextRender()->TextColor(1.0f, 1.0f, 1.0f, Progress);
+		Ui()->DoLabel(&Content, Localize("Settings"), 24.0f, TEXTALIGN_MC);
+		TextRender()->TextColor(TextRender()->DefaultTextColor());
 	}
 }
 
@@ -369,12 +412,17 @@ void CMenusStart::HandleEscape()
 void CMenusStart::RenderStartMenu(CUIRect MainView)
 {
 	GameClient()->m_MenuBackground.ChangePosition(CMenuBackground::POS_START);
-	UpdateAnimations();
+	if(UpdateAnimations())
+		return;
+	const float SpeedScale = std::max(0.01f, (float)g_Config.m_BcMainMenuAnimationSpeed / ANIMATION_SPEED_BASE);
+	if(m_EntranceProgress < 1.0f)
+		m_EntranceProgress = g_Config.m_BcMainMenuAnimation ? std::min(1.0f, m_EntranceProgress + Client()->RenderFrameTime() * SpeedScale / ENTRANCE_DURATION) : 1.0f;
 	HandleEscape();
 	const bool Transitioning = m_Interaction.m_Progress < 1.0f;
 	const float P = EaseInOutCubic(m_Interaction.m_Progress);
 	const bool PageLeaving = m_Interaction.m_Target == EState::PAGE_TRANSITION;
-	const float Visibility = PageLeaving ? 1.0f - P : 1.0f;
+	const float Entrance = EaseOutCubic(m_EntranceProgress);
+	const float Visibility = (PageLeaving ? 1.0f - P : 1.0f) * Entrance;
 	const bool Overlay = m_Interaction.m_Current == EState::SETTINGS_DRAWER || m_Interaction.m_Current == EState::TOP_POPOVER || m_Interaction.m_Current == EState::RIGHT_DRAWER || m_Interaction.m_Target == EState::SETTINGS_DRAWER || m_Interaction.m_Target == EState::TOP_POPOVER || m_Interaction.m_Target == EState::RIGHT_DRAWER;
 	RenderMainStrip(MainView, Visibility, !Transitioning && !Overlay);
 	RenderCenterLogo(MainView, Visibility);
@@ -400,7 +448,8 @@ void CMenusStart::RenderStartMenu(CUIRect MainView)
 		{
 			const float DrawerW = OverlayState == EState::SETTINGS_DRAWER ? std::clamp(MainView.w * DRAWER_WIDTH_RATIO, 360.0f, 550.0f) : OverlayState == EState::RIGHT_DRAWER ? std::clamp(MainView.w * .25f, 280.0f, 420.0f) :
 																							     0.0f;
-			if((OverlayState == EState::SETTINGS_DRAWER && Ui()->MouseX() > MainView.x + DrawerW) || (OverlayState == EState::RIGHT_DRAWER && Ui()->MouseX() < MainView.x + MainView.w - DrawerW))
+			const CUIRect Popover{MainView.x + MainView.w - 260.0f, MainView.y + 30.0f, 215.0f, 142.0f};
+			if((OverlayState == EState::SETTINGS_DRAWER && Ui()->MouseX() > MainView.x + DrawerW) || (OverlayState == EState::RIGHT_DRAWER && Ui()->MouseX() < MainView.x + MainView.w - DrawerW) || (OverlayState == EState::TOP_POPOVER && !Ui()->MouseHovered(&Popover)))
 				BeginTransition(EState::MAIN);
 		}
 	}
