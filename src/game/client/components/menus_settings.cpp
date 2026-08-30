@@ -39,22 +39,35 @@
 
 using namespace std::chrono_literals;
 
-void CMenus::RenderSettingsGeneral(CUIRect MainView)
+void CMenus::RenderSettingsGeneral(CUIRect MainView, ESettingsLayout Layout)
 {
+	const bool Compact = Layout == ESettingsLayout::START_DRAWER;
 	char aBuf[128 + IO_MAX_PATH_LENGTH];
 	CUIRect Label, Button, Left, Right, Game, ClientSettings;
-	MainView.HSplitTop(190.0f, &Game, &ClientSettings);
+	MainView.HSplitTop(Compact ? 390.0f : 190.0f, &Game, &ClientSettings);
 
 	// game
 	{
 		// headline
 		CUIRect GameLabel, LanguageLabel;
 		Game.HSplitTop(30.0f, &Label, &Game);
-		Label.VSplitMid(&GameLabel, &LanguageLabel, 20.0f);
+		if(Compact)
+			GameLabel = Label;
+		else
+			Label.VSplitMid(&GameLabel, &LanguageLabel, 20.0f);
 		Ui()->DoLabel(&GameLabel, Localize("Game"), 20.0f, TEXTALIGN_ML);
-		Ui()->DoLabel(&LanguageLabel, Localize("Language"), 20.0f, TEXTALIGN_ML);
+		if(!Compact)
+			Ui()->DoLabel(&LanguageLabel, Localize("Language"), 20.0f, TEXTALIGN_ML);
 		Game.HSplitTop(5.0f, nullptr, &Game);
-		Game.VSplitMid(&Left, &Right, 20.0f);
+		if(Compact)
+		{
+			Game.HSplitTop(115.0f, &Left, &Right);
+			CUIRect LanguageHeading;
+			Right.HSplitTop(25.0f, &LanguageHeading, &Right);
+			Ui()->DoLabel(&LanguageHeading, Localize("Language"), 16.0f, TEXTALIGN_ML);
+		}
+		else
+			Game.VSplitMid(&Left, &Right, 20.0f);
 
 		// dynamic camera
 		Left.HSplitTop(20.0f, &Button, &Left);
@@ -113,7 +126,10 @@ void CMenus::RenderSettingsGeneral(CUIRect MainView)
 		ClientSettings.HSplitTop(30.0f, &Label, &ClientSettings);
 		Ui()->DoLabel(&Label, Localize("Client"), 20.0f, TEXTALIGN_ML);
 		ClientSettings.HSplitTop(5.0f, nullptr, &ClientSettings);
-		ClientSettings.VSplitMid(&Left, &Right, 20.0f);
+		if(Compact)
+			ClientSettings.HSplitTop(390.0f, &Left, &Right);
+		else
+			ClientSettings.VSplitMid(&Left, &Right, 20.0f);
 
 		// skip main menu
 		Left.HSplitTop(20.0f, &Button, &Left);
@@ -428,7 +444,7 @@ void CMenus::RenderSettingsPlayer(CUIRect MainView)
 	Ui()->DoEditBox_Search(&s_FlagFilterInput, &QuickSearch, 14.0f, !Ui()->IsPopupOpen() && !GameClient()->m_GameConsole.IsActive());
 }
 
-void CMenus::RenderSettingsGraphics(CUIRect MainView)
+void CMenus::RenderSettingsGraphics(CUIRect MainView, ESettingsLayout Layout)
 {
 	CUIRect Button;
 	char aBuf[128];
@@ -462,9 +478,18 @@ void CMenus::RenderSettingsGraphics(CUIRect MainView)
 	}
 
 	CUIRect ModeList, ModeLabel;
-	MainView.VSplitLeft(350.0f, &MainView, &ModeList);
-	ModeList.HSplitTop(24.0f, &ModeLabel, &ModeList);
-	MainView.VSplitLeft(340.0f, &MainView, nullptr);
+	if(Layout == ESettingsLayout::START_DRAWER)
+	{
+		MainView.HSplitTop(24.0f, &ModeLabel, &MainView);
+		MainView.HSplitTop(std::clamp(MainView.h * 0.22f, 140.0f, 180.0f), &ModeList, &MainView);
+		MainView.HSplitTop(12.0f, nullptr, &MainView);
+	}
+	else
+	{
+		MainView.VSplitLeft(350.0f, &MainView, &ModeList);
+		ModeList.HSplitTop(24.0f, &ModeLabel, &ModeList);
+		MainView.VSplitLeft(340.0f, &MainView, nullptr);
+	}
 
 	// display mode list
 	static CListBox s_ListBox;
@@ -1009,7 +1034,7 @@ bool CMenus::RenderLanguageSelection(CUIRect MainView)
 	return s_ListBox.WasItemActivated();
 }
 
-void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground)
+void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground, ESettingsLayout Layout)
 {
 	if(g_Config.m_UiSettingsPage == SETTINGS_LANGUAGE)
 		g_Config.m_UiSettingsPage = SETTINGS_GENERAL;
@@ -1023,7 +1048,7 @@ void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground)
 	if(g_Config.m_UiSettingsPage == SETTINGS_GENERAL)
 	{
 		SetBackground(CMenuBackground::POS_SETTINGS_GENERAL);
-		RenderSettingsGeneral(MainView);
+		RenderSettingsGeneral(MainView, Layout);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_TEE)
 	{
@@ -1033,17 +1058,17 @@ void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground)
 	else if(g_Config.m_UiSettingsPage == SETTINGS_APPEARANCE)
 	{
 		SetBackground(CMenuBackground::POS_SETTINGS_APPEARANCE);
-		RenderSettingsAppearance(MainView);
+		RenderSettingsAppearance(MainView, Layout);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_CONTROLS)
 	{
 		SetBackground(CMenuBackground::POS_SETTINGS_CONTROLS);
-		m_MenusSettingsControls.Render(MainView);
+		m_MenusSettingsControls.Render(MainView, Layout == ESettingsLayout::START_DRAWER);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_GRAPHICS)
 	{
 		SetBackground(CMenuBackground::POS_SETTINGS_GRAPHICS);
-		RenderSettingsGraphics(MainView);
+		RenderSettingsGraphics(MainView, Layout);
 	}
 	else if(g_Config.m_UiSettingsPage == SETTINGS_SOUND)
 	{
@@ -1078,7 +1103,7 @@ void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground)
 	else if(g_Config.m_UiSettingsPage == SETTINGS_BESTCLIENT)
 	{
 		SetBackground(CMenuBackground::POS_SETTINGS_RESERVED0);
-		RenderSettingsBestClient(MainView);
+		RenderSettingsBestClient(MainView, Layout);
 	}
 	else
 		dbg_assert_failed("ui_settings_page invalid");
@@ -1086,7 +1111,7 @@ void CMenus::RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground)
 
 void CMenus::RenderSettingsInStartDrawer(CUIRect View)
 {
-	RenderSettingsPageContent(View, false);
+	RenderSettingsPageContent(View, false, ESettingsLayout::START_DRAWER);
 }
 
 void CMenus::RenderSettings(CUIRect MainView)
@@ -1429,7 +1454,7 @@ void CMenus::RenderSettings(CUIRect MainView)
 			g_Config.m_UiSettingsPage = i;
 	}
 
-	RenderSettingsPageContent(MainView, true);
+	RenderSettingsPageContent(MainView, true, ESettingsLayout::NORMAL);
 
 	if(NeedRestart)
 	{
@@ -1732,8 +1757,9 @@ enum
 	NUMBER_OF_APPEARANCE_TABS = 6,
 };
 
-void CMenus::RenderSettingsAppearance(CUIRect MainView)
+void CMenus::RenderSettingsAppearance(CUIRect MainView, ESettingsLayout Layout)
 {
+	const bool Compact = Layout == ESettingsLayout::START_DRAWER;
 	char aBuf[128];
 	static int s_CurTab = 0;
 
@@ -1771,10 +1797,16 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 
 	const float ColorPickerLabelSize = 13.0f;
 	const float ColorPickerLineSpacing = 5.0f;
+	auto SplitViews = [&](CUIRect View, CUIRect *pFirst, CUIRect *pSecond) {
+		if(Compact)
+			View.HSplitTop(View.h * 0.5f, pFirst, pSecond);
+		else
+			View.VSplitMid(pFirst, pSecond, MarginBetweenViews);
+	};
 
 	if(s_CurTab == APPEARANCE_TAB_HUD)
 	{
-		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+		SplitViews(MainView, &LeftView, &RightView);
 
 		// ***** HUD ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("HUD"), HeadlineFontSize,
@@ -1854,7 +1886,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 		CUIRect TopView, PreviewView;
 		MainView.HSplitBottom(220.0f, &TopView, &PreviewView);
 		TopView.HSplitBottom(MarginBetweenViews, &TopView, nullptr);
-		TopView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+		SplitViews(TopView, &LeftView, &RightView);
 
 		// ***** Chat ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Chat"), HeadlineFontSize,
@@ -2244,7 +2276,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 	}
 	else if(s_CurTab == APPEARANCE_TAB_NAME_PLATE)
 	{
-		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+		SplitViews(MainView, &LeftView, &RightView);
 
 		// ***** Name Plate ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Name Plate"), HeadlineFontSize,
@@ -2345,7 +2377,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 	}
 	else if(s_CurTab == APPEARANCE_TAB_HOOK_COLLISION)
 	{
-		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+		SplitViews(MainView, &LeftView, &RightView);
 
 		// ***** Hookline ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Hook collision line"), HeadlineFontSize,
@@ -2538,7 +2570,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 	}
 	else if(s_CurTab == APPEARANCE_TAB_INFO_MESSAGES)
 	{
-		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+		SplitViews(MainView, &LeftView, &RightView);
 
 		// ***** Info Messages ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Info Messages"), HeadlineFontSize,
@@ -2564,7 +2596,7 @@ void CMenus::RenderSettingsAppearance(CUIRect MainView)
 	}
 	else if(s_CurTab == APPEARANCE_TAB_LASER)
 	{
-		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+		SplitViews(MainView, &LeftView, &RightView);
 
 		// ***** Weapons ***** //
 		Ui()->DoLabel_AutoLineSize(Localize("Weapons"), HeadlineFontSize,

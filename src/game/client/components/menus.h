@@ -650,7 +650,12 @@ protected:
 	void RenderLanguageSettings(CUIRect MainView);
 	bool RenderLanguageSelection(CUIRect MainView);
 	void RenderThemeSelection(CUIRect MainView);
-	void RenderSettingsGeneral(CUIRect MainView);
+	enum class ESettingsLayout
+	{
+		NORMAL,
+		START_DRAWER,
+	};
+	void RenderSettingsGeneral(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
 	void RenderSettingsPlayer(CUIRect MainView);
 	void RenderSettingsTee(CUIRect MainView);
 	struct SPopupSettingsCountrySelectionContext
@@ -665,7 +670,7 @@ protected:
 	void RenderSettingsTeeCustom7(CUIRect MainView);
 	void RenderSkinSelection7(CUIRect MainView);
 	void RenderSkinPartSelection7(CUIRect MainView);
-	void RenderSettingsGraphics(CUIRect MainView);
+	void RenderSettingsGraphics(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
 	void RenderSettingsSound(CUIRect MainView);
 	void RenderSettings(CUIRect MainView);
 	void RenderSettingsCustom(CUIRect MainView);
@@ -934,8 +939,8 @@ private:
 
 	// found in menus_settings.cpp
 	void RenderSettingsDDNet(CUIRect MainView);
-	void RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground);
-	void RenderSettingsAppearance(CUIRect MainView);
+	void RenderSettingsPageContent(CUIRect MainView, bool ChangeBackground, ESettingsLayout Layout);
+	void RenderSettingsAppearance(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
 
 	// found in menus_bestclient.cpp
 	struct SPopupVoiceModerationContext
@@ -943,11 +948,11 @@ private:
 		CMenus *m_pMenus;
 	};
 	static CUi::EPopupMenuFunctionResult PopupVoiceModeration(void *pContext, CUIRect View, bool Active);
-	void RenderSettingsBestClient(CUIRect MainView);
-	void RenderSettingsBestClientInfo(CUIRect MainView);
-	void RenderSettingsBestClientVisuals(CUIRect MainView);
-	void RenderSettingsBestClientGameplay(CUIRect MainView);
-	void RenderSettingsBestClientOthers(CUIRect MainView);
+	void RenderSettingsBestClient(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
+	void RenderSettingsBestClientInfo(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
+	void RenderSettingsBestClientVisuals(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
+	void RenderSettingsBestClientGameplay(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
+	void RenderSettingsBestClientOthers(CUIRect MainView, ESettingsLayout Layout = ESettingsLayout::NORMAL);
 
 	// found in menus_games.cpp
 	void RenderSettingsBestClientFun(CUIRect MainView);

@@ -145,7 +145,7 @@ enum
 
 static int s_CurBestClientTab = BESTCLIENT_TAB_VISUALS;
 
-void CMenus::RenderSettingsBestClient(CUIRect MainView)
+void CMenus::RenderSettingsBestClient(CUIRect MainView, ESettingsLayout Layout)
 {
 	// Match original old-layout: shift content up past the 20px margin so tab bar
 	// appears 8px from the panel border instead of 20px from content area start.
@@ -215,18 +215,18 @@ void CMenus::RenderSettingsBestClient(CUIRect MainView)
 	MainView.HSplitTop(10.0f, nullptr, &MainView);
 
 	if(s_CurBestClientTab == BESTCLIENT_TAB_VISUALS)
-		RenderSettingsBestClientVisuals(MainView);
+		RenderSettingsBestClientVisuals(MainView, Layout);
 	else if(s_CurBestClientTab == BESTCLIENT_TAB_GAMEPLAY)
-		RenderSettingsBestClientGameplay(MainView);
+		RenderSettingsBestClientGameplay(MainView, Layout);
 	else if(s_CurBestClientTab == BESTCLIENT_TAB_OTHERS)
-		RenderSettingsBestClientOthers(MainView);
+		RenderSettingsBestClientOthers(MainView, Layout);
 	else if(s_CurBestClientTab == BESTCLIENT_TAB_FUN)
 		RenderSettingsBestClientFun(MainView);
 	else if(s_CurBestClientTab == BESTCLIENT_TAB_INFO)
-		RenderSettingsBestClientInfo(MainView);
+		RenderSettingsBestClientInfo(MainView, Layout);
 }
 
-void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
+void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView, ESettingsLayout Layout)
 {
 	const float LineSize = 20.0f;
 	const float MarginSmall = 5.0f;
@@ -262,7 +262,10 @@ void CMenus::RenderSettingsBestClientVisuals(CUIRect MainView)
 	MainView.VSplitLeft(5.0f, nullptr, &MainView);
 
 	CUIRect LeftView, RightView;
-	MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+	if(Layout == ESettingsLayout::START_DRAWER)
+		MainView.HSplitTop(MainView.h * 0.5f, &LeftView, &RightView);
+	else
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
 	LeftView.VSplitLeft(MarginSmall, nullptr, &LeftView);
 	RightView.VSplitRight(MarginSmall, &RightView, nullptr);
 
@@ -1913,7 +1916,7 @@ void CMenus::DoTickAmountSlider(int *pValue, const CUIRect *pRect, const char *p
 	*pValue = std::clamp(Value, Min, Max);
 }
 
-void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
+void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView, ESettingsLayout Layout)
 {
 	const float LineSize = 20.0f;
 	const float MarginSmall = 5.0f;
@@ -1936,7 +1939,10 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	MainView.VSplitLeft(5.0f, nullptr, &MainView);
 
 	CUIRect LeftView, RightView;
-	MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+	if(Layout == ESettingsLayout::START_DRAWER)
+		MainView.HSplitTop(MainView.h * 0.5f, &LeftView, &RightView);
+	else
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
 	LeftView.VSplitLeft(MarginSmall, nullptr, &LeftView);
 	RightView.VSplitRight(MarginSmall, &RightView, nullptr);
 
@@ -2725,9 +2731,8 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	UpdateModuleRevealPhase(s_FinishPredictionTimeRevealPhase, FinishPredictionShowTimeOptions, Client()->RenderFrameTime());
 	const float FinishPredictionTimeExpandedHeight = (MarginSmall + LineSize) * 2.0f * BCUiAnimations::EaseOutCubic(s_FinishPredictionTimeRevealPhase); // Time left/Finish time + Show milliseconds
 	const float FinishPredictionExpandedTargetHeight = (MarginSmall + LineSize) // Show time checkbox
-							    + FinishPredictionTimeExpandedHeight
-							    + MarginSmall + LineSize // Show percentage checkbox
-							    + MarginSmall + LineSize; // Show always checkbox
+							   + FinishPredictionTimeExpandedHeight + MarginSmall + LineSize // Show percentage checkbox
+							   + MarginSmall + LineSize; // Show always checkbox
 	const float FinishPredictionExpandedHeight = FinishPredictionExpandedTargetHeight * BCUiAnimations::EaseOutCubic(s_FinishPredictionRevealPhase);
 	const float FinishPredictionBlockHeight = LineSize + MarginSmall + LineSize + FinishPredictionExpandedHeight;
 
@@ -2982,7 +2987,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	s_GameplayScrollRegion.End();
 }
 
-void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
+void CMenus::RenderSettingsBestClientOthers(CUIRect MainView, ESettingsLayout Layout)
 {
 	const float LineSize = 20.0f;
 	const float MarginSmall = 5.0f;
@@ -3003,7 +3008,10 @@ void CMenus::RenderSettingsBestClientOthers(CUIRect MainView)
 	MainView.VSplitLeft(5.0f, nullptr, &MainView);
 
 	CUIRect LeftView, RightView;
-	MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+	if(Layout == ESettingsLayout::START_DRAWER)
+		MainView.HSplitTop(MainView.h * 0.5f, &LeftView, &RightView);
+	else
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
 	LeftView.VSplitLeft(MarginSmall, nullptr, &LeftView);
 	RightView.VSplitRight(MarginSmall, &RightView, nullptr);
 
@@ -3637,7 +3645,7 @@ CUi::EPopupMenuFunctionResult CMenus::PopupVoiceModeration(void *pContext, CUIRe
 	return CUi::POPUP_KEEP_OPEN;
 }
 
-void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
+void CMenus::RenderSettingsBestClientInfo(CUIRect MainView, ESettingsLayout Layout)
 {
 	const float LineSize = 20.0f;
 	const float MarginSmall = 5.0f;
@@ -3648,7 +3656,10 @@ void CMenus::RenderSettingsBestClientInfo(CUIRect MainView)
 	CUIRect LeftView, RightView, Button, Label, LowerLeftView;
 	MainView.HSplitTop(20.0f, nullptr, &MainView);
 
-	MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
+	if(Layout == ESettingsLayout::START_DRAWER)
+		MainView.HSplitTop(MainView.h * 0.5f, &LeftView, &RightView);
+	else
+		MainView.VSplitMid(&LeftView, &RightView, MarginBetweenViews);
 	LeftView.VSplitLeft(MarginSmall, nullptr, &LeftView);
 	RightView.VSplitRight(MarginSmall, &RightView, nullptr);
 	LeftView.HSplitMid(&LeftView, &LowerLeftView, 0.0f);

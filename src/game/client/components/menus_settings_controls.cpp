@@ -133,7 +133,7 @@ void CMenusSettingsControls::OnInterfacesInit(CGameClient *pClient)
 	m_JoystickDropDownState.m_SelectionPopupContext.m_pScrollRegion = &m_JoystickDropDownScrollRegion;
 }
 
-void CMenusSettingsControls::Render(CUIRect MainView)
+void CMenusSettingsControls::Render(CUIRect MainView, bool Compact)
 {
 	UpdateBindOptions();
 
@@ -196,7 +196,13 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 	MainView.y += ScrollOffset.y;
 
 	CUIRect LeftColumn, RightColumn;
-	MainView.VSplitMid(&LeftColumn, &RightColumn, MARGIN);
+	if(Compact)
+	{
+		LeftColumn = MainView;
+		RightColumn = MainView;
+	}
+	else
+		MainView.VSplitMid(&LeftColumn, &RightColumn, MARGIN);
 
 	// Left column
 	RenderSettingsBlock(MeasureSettingsMouseHeight(), &LeftColumn,
@@ -205,6 +211,8 @@ void CMenusSettingsControls::Render(CUIRect MainView)
 		Localize("Controller"), nullptr, nullptr, std::bind_front(&CMenusSettingsControls::RenderSettingsJoystick, this));
 	RenderSettingsBindsBlock(EBindOptionGroup::MOVEMENT, &LeftColumn, Localize("Movement"));
 	RenderSettingsBindsBlock(EBindOptionGroup::WEAPON, &LeftColumn, Localize("Weapon"));
+	if(Compact)
+		RightColumn.y = LeftColumn.y;
 
 	// Right column
 	RenderSettingsBindsBlock(EBindOptionGroup::VOTING, &RightColumn, Localize("Voting"));

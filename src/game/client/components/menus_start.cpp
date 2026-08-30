@@ -11,6 +11,7 @@
 #include <game/client/components/bestclient/version.h>
 #include <game/client/gameclient.h>
 #include <game/client/ui.h>
+#include <game/client/ui_scrollregion.h>
 #include <game/localization.h>
 #include <game/version.h>
 
@@ -329,9 +330,32 @@ void CMenusStart::RenderSettingsDrawer(CUIRect MainView, float Progress)
 	Content.Margin(10.0f, &Content);
 	if(Progress >= 1.0f)
 	{
-		Ui()->ClipEnable(&Content);
-		GameClient()->m_Menus.RenderSettingsInStartDrawer(Content);
-		Ui()->ClipDisable();
+		const int Page = std::clamp(g_Config.m_UiSettingsPage, 0, CMenus::SETTINGS_LENGTH - 1);
+		const bool OwnsScrolling = Page == CMenus::SETTINGS_TEE || Page == CMenus::SETTINGS_CONTROLS || Page == CMenus::SETTINGS_ASSETS || Page == CMenus::SETTINGS_TCLIENT || Page == CMenus::SETTINGS_PROFILES || Page == CMenus::SETTINGS_CONFIGS;
+		if(OwnsScrolling)
+		{
+			Ui()->ClipEnable(&Content);
+			GameClient()->m_Menus.RenderSettingsInStartDrawer(Content);
+			Ui()->ClipDisable();
+		}
+		else
+		{
+			static CScrollRegion s_aPageScrollRegions[CMenus::SETTINGS_LENGTH];
+			CScrollRegionParams Params;
+			Params.m_ScrollUnit = 60.0f;
+			Params.m_Flags = CScrollRegionParams::FLAG_CONTENT_STATIC_WIDTH;
+			Params.m_ScrollbarWidth = 12.0f;
+			Params.m_ScrollbarMargin = 3.0f;
+			vec2 ScrollOffset(0.0f, 0.0f);
+			s_aPageScrollRegions[Page].Begin(&Content, &ScrollOffset, &Params);
+			CUIRect PageView = Content;
+			PageView.y += ScrollOffset.y;
+			PageView.h = Page == CMenus::SETTINGS_GENERAL ? 980.0f : Page == CMenus::SETTINGS_GRAPHICS ? 820.0f :
+														     900.0f;
+			GameClient()->m_Menus.RenderSettingsInStartDrawer(PageView);
+			s_aPageScrollRegions[Page].AddRect(PageView);
+			s_aPageScrollRegions[Page].End();
+		}
 	}
 	else
 	{
@@ -402,6 +426,10 @@ void CMenusStart::RenderRightDrawer(CUIRect MainView, float Progress)
 void CMenusStart::HandleEscape()
 {
 	if(!Ui()->ConsumeHotkey(CUi::HOTKEY_ESCAPE))
+		return;
+	// Opening/closing geometry is deliberately not reversed mid-flight. Consume
+	// Escape until the deterministic transition reaches a stable state.
+	if(m_Interaction.m_Progress < 1.0f)
 		return;
 	if(m_Interaction.m_Current == EState::TOP_POPOVER || m_Interaction.m_Current == EState::RIGHT_DRAWER || m_Interaction.m_Current == EState::SETTINGS_DRAWER || IsSubmenu(m_Interaction.m_Current))
 		BeginTransition(EState::MAIN);
