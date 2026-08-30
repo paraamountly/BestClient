@@ -24,6 +24,31 @@ void CDragger::Tick()
 	DraggerBeamTick();
 }
 
+bool CDragger::CanAffectCharacterNextTick(CCharacter *pCharacter)
+{
+	if(!pCharacter || pCharacter->Team() == TEAM_SUPER)
+		return false;
+	const int Period = (int)(GameWorld()->GameTickSpeed() * 0.15f);
+	const bool CanRetarget = (GameWorld()->GameTick() + 1) % Period == 0;
+	vec2 NextPos = m_Pos;
+	vec2 NextCore = m_Core;
+	if(CanRetarget)
+	{
+		Collision()->MoverSpeed(m_Pos.x, m_Pos.y, &NextCore);
+		NextPos += NextCore;
+	}
+	if(m_TargetId != pCharacter->GetCid() && !CanRetarget)
+		return false;
+	if(m_Layer == LAYER_SWITCH && m_Number > 0 && !Switchers()[m_Number].m_aStatus[pCharacter->Team()])
+		return false;
+	const float Distance = distance(pCharacter->Core()->m_Pos, NextPos);
+	if(Distance <= CCharacterCore::PhysicalSize() || Distance >= g_Config.m_SvDraggerRange)
+		return false;
+	return m_IgnoreWalls ?
+		       !Collision()->IntersectNoLaserNoWalls(NextPos, pCharacter->Core()->m_Pos, nullptr, nullptr) :
+		       !Collision()->IntersectNoLaser(NextPos, pCharacter->Core()->m_Pos, nullptr, nullptr);
+}
+
 void CDragger::LookForPlayersToDrag()
 {
 	// Create a list of players who are in the range of the dragger

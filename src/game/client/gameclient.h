@@ -1219,6 +1219,18 @@ public:
 	float m_SmoothIntraTick = 0.0f;
 	bool CheckNewInput() override;
 	bool IsSnapTapBlockedByCommunity() const;
+	struct SGoresSmartStopContext
+	{
+		int m_DecisionTick = 0;
+		int m_PredictionGeneration = 0;
+		float m_VelX = 0.0f;
+		float m_ControlSpeed = 0.0f;
+		float m_ControlAccel = 0.0f;
+		float m_Friction = 0.0f;
+		bool m_Grounded = false;
+		uint64_t m_PhysicsFingerprint = 0;
+	};
+	bool TryGetGoresSmartStopContext(SGoresSmartStopContext &Context);
 	bool IsAspectRatioBlockedByFng() const;
 	std::optional<CServerInfo> m_ConnectServerInfo = std::nullopt;
 	void SetConnectInfo(const NETADDR *pAddress) override;

@@ -27,6 +27,7 @@ public:
 
 	void Reset();
 	void Tick() override;
+	bool CanAffectCharacterNextTick(const CCharacter *pCharacter);
 };
 
 #endif // GAME_CLIENT_PREDICTION_ENTITIES_PLASMA_H

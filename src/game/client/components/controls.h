@@ -50,6 +50,27 @@ public:
 	int64_t m_aSnapTapLastPressedTime[NUM_DUMMIES];
 	int m_aSnapTapPrevLeft[NUM_DUMMIES];
 	int m_aSnapTapPrevRight[NUM_DUMMIES];
+	struct SSmartInputEventState
+	{
+		bool m_LeftHeld = false;
+		bool m_RightHeld = false;
+		int m_LatestPressedDirection = 0;
+		uint64_t m_Serial = 0;
+		uint64_t m_ArmSerial = 0;
+		int m_RequestedDirection = 0;
+	};
+	struct SSmartDecisionCache
+	{
+		bool m_Valid = false;
+		uint64_t m_InputSerial = 0;
+		int m_DecisionTick = 0;
+		int m_PredictionGeneration = 0;
+		int m_RequestedDirection = 0;
+		int m_Direction = 0;
+		uint64_t m_PhysicsFingerprint = 0;
+	};
+	SSmartInputEventState m_aSmartInputEvent[NUM_DUMMIES];
+	SSmartDecisionCache m_aSmartDecisionCache[NUM_DUMMIES];
 
 	CControls();
 	int Sizeof() const override { return sizeof(*this); }
@@ -78,6 +99,9 @@ private:
 	bool UseGammaInputMovement() const;
 	void UpdateSnapTapState(int Dummy, bool LeftPressed, bool RightPressed);
 	int ResolveSnapTapDirection(int Dummy, bool LeftPressed, bool RightPressed);
+	void UpdateSmartInputEvent(int Dummy, int Direction, bool Held);
+	bool IsSmartStopActive() const;
+	int ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed, int ClassicDirection);
 	static void ConKeyInputState(IConsole::IResult *pResult, void *pUserData);
 	static void ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData);
 	static void ConKeyInputSet(IConsole::IResult *pResult, void *pUserData);

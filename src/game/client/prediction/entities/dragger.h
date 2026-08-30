@@ -22,6 +22,7 @@ public:
 	bool Match(CDragger *pDragger);
 	void Read(const CLaserData *pData);
 	float GetStrength() const { return m_Strength; }
+	bool CanAffectCharacterNextTick(CCharacter *pCharacter);
 
 	void Tick() override;
 };

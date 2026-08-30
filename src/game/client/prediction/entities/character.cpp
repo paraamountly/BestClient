@@ -494,6 +494,26 @@ void CCharacter::FireWeapon()
 	}
 }
 
+bool CCharacter::CanCreateShotgunImpulseNextTick(const CCharacter *pTarget) const
+{
+	if(!pTarget || !m_pGameWorld->m_WorldConfig.m_PredictWeapons || m_NumInputs < 2 ||
+		m_ReloadTimer != 0 || m_FreezeTime != 0)
+		return false;
+	int Weapon = m_Core.m_ActiveWeapon;
+	if(m_QueuedWeapon == WEAPON_SHOTGUN && !m_Core.m_aWeapons[WEAPON_NINJA].m_Got &&
+		m_Core.m_aWeapons[WEAPON_SHOTGUN].m_Got)
+		Weapon = WEAPON_SHOTGUN;
+	if(Weapon != WEAPON_SHOTGUN || !m_Core.m_aWeapons[WEAPON_SHOTGUN].m_Ammo)
+		return false;
+	bool WillFire = CountInput(m_LatestPrevInput.m_Fire, m_LatestInput.m_Fire).m_Presses > 0;
+	if((m_LatestInput.m_Fire & 1) && m_Core.m_aWeapons[WEAPON_SHOTGUN].m_Ammo)
+		WillFire = true;
+	if(!WillFire)
+		return false;
+	const float Reach = m_pGameWorld->GetTuning(GetOverriddenTuneZone())->m_LaserReach + CCharacterCore::PhysicalSize();
+	return distance(m_Core.m_Pos, pTarget->Core()->m_Pos) <= Reach;
+}
+
 void CCharacter::HandleWeapons()
 {
 	//ninja
@@ -1127,6 +1147,70 @@ void CCharacter::HandleTuneLayer()
 	int CurrentIndex = Collision()->GetMapIndex(m_Pos);
 	SetTuneZone(GameWorld()->m_WorldConfig.m_UseTuneZones ? Collision()->IsTune(CurrentIndex) : 0);
 	m_Core.m_Tuning = *GetTuning(GetOverriddenTuneZone());
+}
+
+bool CCharacter::TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded)
+{
+	const int CurrentIndex = Collision()->GetMapIndex(m_Core.m_Pos);
+	const int MoveRestrictions = Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, m_Core.m_Pos, 18.0f, CurrentIndex);
+	if(MoveRestrictions != 0)
+		return false;
+
+	const int PositionTuneZone = GameWorld()->m_WorldConfig.m_UseTuneZones ? Collision()->IsTune(CurrentIndex) : 0;
+	const int EffectiveTuneZone = m_TuneZoneOverride == TuneZone::OVERRIDE_NONE ? PositionTuneZone : m_TuneZoneOverride;
+	Tuning = *GetTuning(EffectiveTuneZone);
+
+	// This is deliberately identical to CCharacterCore::Tick's ground test. In
+	// particular, stopper support is not treated as physical ground.
+	Grounded = Collision()->CheckPoint(m_Core.m_Pos.x + CCharacterCore::PhysicalSize() / 2,
+			   m_Core.m_Pos.y + CCharacterCore::PhysicalSize() / 2 + 5) ||
+		   Collision()->CheckPoint(m_Core.m_Pos.x - CCharacterCore::PhysicalSize() / 2,
+			   m_Core.m_Pos.y + CCharacterCore::PhysicalSize() / 2 + 5);
+
+	auto IsSpecialDisplacement = [this](int Index) {
+		return Collision()->IsSpeedup(Index) || Collision()->IsTeleport(Index) ||
+		       Collision()->IsEvilTeleport(Index) || Collision()->IsCheckTeleport(Index) ||
+		       Collision()->IsCheckEvilTeleport(Index) || Collision()->IsTeleCheckpoint(Index);
+	};
+	if(IsSpecialDisplacement(CurrentIndex))
+		return false;
+
+	// Jump input is rejected by the caller. Reproduce each of the three legal
+	// horizontal actions, including velocity ramp and a read-only MoveBox collision
+	// probe, so every possible next center path is covered exactly.
+	const float MaxSpeed = Grounded ? (float)Tuning.m_GroundControlSpeed : (float)Tuning.m_AirControlSpeed;
+	const float Accel = Grounded ? (float)Tuning.m_GroundControlAccel : (float)Tuning.m_AirControlAccel;
+	const float Friction = Grounded ? (float)Tuning.m_GroundFriction : (float)Tuning.m_AirFriction;
+	for(int Direction = -1; Direction <= 1; Direction++)
+	{
+		vec2 MoveVelocity(m_Core.m_Vel.x, m_Core.m_Vel.y + (float)Tuning.m_Gravity);
+		if(Direction != 0)
+			MoveVelocity.x = SaturatedAdd(-MaxSpeed, MaxSpeed, MoveVelocity.x, Direction * Accel);
+		else
+			MoveVelocity.x *= Friction;
+		const float Ramp = VelocityRamp(length(MoveVelocity) * 50, Tuning.m_VelrampStart, Tuning.m_VelrampRange, Tuning.m_VelrampCurvature);
+		MoveVelocity.x *= Ramp;
+		const float ExpectedHorizontalVelocity = MoveVelocity.x;
+		vec2 End = m_Core.m_Pos;
+		Collision()->MoveBox(&End, &MoveVelocity, CCharacterCore::PhysicalSizeVec2(),
+			vec2(Tuning.m_GroundElasticityX, Tuning.m_GroundElasticityY));
+		if(std::abs(MoveVelocity.x - ExpectedHorizontalVelocity) > 1.0f / 256.0f)
+			return false;
+		for(const int Index : Collision()->GetMapIndices(m_Core.m_Pos, End))
+		{
+			if(IsSpecialDisplacement(Index) ||
+				Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, End, 18.0f, Index) != 0)
+				return false;
+			CDoorTile DoorTile;
+			Collision()->GetDoorTile(Index, &DoorTile);
+			if(DoorTile.m_Index != 0)
+				return false;
+		}
+		const int EndIndex = Collision()->GetMapIndex(End);
+		if(Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, End, 18.0f, EndIndex) != 0)
+			return false;
+	}
+	return true;
 }
 
 void CCharacter::DDRaceTick()

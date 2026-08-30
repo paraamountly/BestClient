@@ -153,6 +153,25 @@ void CPickup::Tick()
 	}
 }
 
+bool CPickup::CanAffectCharacterNextTick(CCharacter *pCharacter)
+{
+	if(!pCharacter)
+		return false;
+	if(m_Type == POWERUP_WEAPON)
+		return false;
+	if(m_Layer == LAYER_SWITCH && m_Number > 0 && m_Number < (int)Switchers().size() &&
+		!Switchers()[m_Number].m_aStatus[pCharacter->Team()])
+		return false;
+	vec2 NextPos = m_Pos;
+	vec2 NextCore = m_Core;
+	if((GameWorld()->GameTick() + 1) % (int)(GameWorld()->GameTickSpeed() * 0.15f) == 0)
+	{
+		Collision()->MoverSpeed(m_Pos.x, m_Pos.y, &NextCore);
+		NextPos += NextCore;
+	}
+	return distance(NextPos, pCharacter->Core()->m_Pos) <= GetProximityRadius() + ms_CollisionExtraSize;
+}
+
 void CPickup::Move()
 {
 	if(GameWorld()->GameTick() % (int)(GameWorld()->GameTickSpeed() * 0.15f) == 0)

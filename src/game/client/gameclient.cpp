@@ -42,6 +42,10 @@
 #include "components/voting.h"
 #include "lineinput.h"
 #include "prediction/entities/character.h"
+#include "prediction/entities/dragger.h"
+#include "prediction/entities/laser.h"
+#include "prediction/entities/pickup.h"
+#include "prediction/entities/plasma.h"
 #include "prediction/entities/projectile.h"
 #include "race.h"
 #include "render.h"
@@ -3191,6 +3195,115 @@ bool CGameClient::IsCloudInputMode() const
 bool CGameClient::IsGoresInputMode() const
 {
 	return g_Config.m_BcInputs == BC_INPUTS_GORES && g_Config.m_BcGoresInputAmount > 0;
+}
+
+bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
+{
+	Context = {};
+	if(IsGoresInputMode())
+	{
+		Context.m_DecisionTick = Client()->PredGameTick(g_Config.m_ClDummy);
+		Context.m_PredictionGeneration = m_GoresPredictionGeneration;
+	}
+	if(!IsGoresInputMode() || m_Snap.m_LocalClientId < 0 || m_GoresPredictionGeneration <= 0 ||
+		m_GoresLocalFreezeTransition || m_GoresInteractionClientId >= 0)
+		return false;
+
+	CCharacter *pLocal = m_PredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
+	if(!pLocal)
+		return false;
+	const CCharacterCore Core = pLocal->GetCore();
+	if(Core.m_HookState == HOOK_GRABBED || Core.HookedPlayer() >= 0 || Core.m_ActiveWeapon == WEAPON_NINJA ||
+		Core.m_Jetpack || Core.m_FreezeEnd != 0 || Core.m_LiveFrozen || Core.m_DeepFrozen || Core.m_IsInFreeze)
+		return false;
+	if(m_Controls.m_aInputData[g_Config.m_ClDummy].m_Jump != 0 ||
+		m_Controls.m_aInputData[g_Config.m_ClDummy].m_Hook != 0)
+		return false;
+
+	// Local membership is expected. Only a non-local member represents an external interaction.
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		if(ClientId == m_Snap.m_LocalClientId)
+			continue;
+		if(m_aGoresInteractionGroup[ClientId])
+			return false;
+		CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+		if(!pOther)
+			continue;
+		const float TeeDistance = distance(pOther->GetCore().m_Pos, Core.m_Pos);
+		if(pOther->GetCore().HookedPlayer() == m_Snap.m_LocalClientId ||
+			TeeDistance < CCharacterCore::PhysicalSize() * 2.25f)
+			return false;
+		if(pOther->CanCreateShotgunImpulseNextTick(pLocal))
+			return false;
+	}
+
+	CTuningParams NextTuning;
+	bool Grounded;
+	if(!pLocal->TryGetSmartStopPhysics(NextTuning, Grounded))
+		return false;
+
+	// Any projectile close enough to enter the explosion influence radius during
+	// its next predicted segment makes the analytical horizontal model uncertain.
+	for(CProjectile *pProjectile = (CProjectile *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PROJECTILE);
+		pProjectile; pProjectile = (CProjectile *)pProjectile->TypeNext())
+	{
+		const float CurrentTime = (m_PredictedWorld.GameTick() - pProjectile->GetStartTick()) /
+					  (float)m_PredictedWorld.GameTickSpeed();
+		const float NextTime = (m_PredictedWorld.GameTick() + 1 - pProjectile->GetStartTick()) /
+				       (float)m_PredictedWorld.GameTickSpeed();
+		const vec2 CurrentPos = pProjectile->GetPos(CurrentTime);
+		const vec2 NextPos = pProjectile->GetPos(NextTime);
+		vec2 ClosestPos = CurrentPos;
+		closest_point_on_line(CurrentPos, NextPos, Core.m_Pos, ClosestPos);
+		constexpr float ProjectileInfluenceRadius = 135.0f + CCharacterCore::PhysicalSize();
+		if(distance(ClosestPos, Core.m_Pos) <= ProjectileInfluenceRadius)
+			return false;
+	}
+	for(CLaser *pLaser = (CLaser *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_LASER);
+		pLaser; pLaser = (CLaser *)pLaser->TypeNext())
+	{
+		const float Energy = maximum(pLaser->GetEnergy(), 0.0f);
+		if(distance(pLaser->GetPos(), Core.m_Pos) <= Energy + CCharacterCore::PhysicalSize())
+			return false;
+	}
+	for(CDragger *pDragger = (CDragger *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_DRAGGER);
+		pDragger; pDragger = (CDragger *)pDragger->TypeNext())
+		if(pDragger->CanAffectCharacterNextTick(pLocal))
+			return false;
+	for(CPlasma *pPlasma = (CPlasma *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PLASMA);
+		pPlasma; pPlasma = (CPlasma *)pPlasma->TypeNext())
+		if(pPlasma->CanAffectCharacterNextTick(pLocal))
+			return false;
+	for(CPickup *pPickup = (CPickup *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PICKUP);
+		pPickup; pPickup = (CPickup *)pPickup->TypeNext())
+		if(pPickup->CanAffectCharacterNextTick(pLocal))
+			return false;
+
+	Context.m_VelX = Core.m_Vel.x;
+	Context.m_Grounded = Grounded;
+	Context.m_ControlSpeed = Grounded ? NextTuning.m_GroundControlSpeed : NextTuning.m_AirControlSpeed;
+	Context.m_ControlAccel = Grounded ? NextTuning.m_GroundControlAccel : NextTuning.m_AirControlAccel;
+	Context.m_Friction = Grounded ? NextTuning.m_GroundFriction : NextTuning.m_AirFriction;
+	auto Fingerprint = [](uint64_t Hash, uint32_t Value) {
+		return (Hash ^ (uint32_t)Value) * 1099511628211ULL;
+	};
+	auto FloatBits = [](float Value) {
+		uint32_t Bits;
+		mem_copy(&Bits, &Value, sizeof(Bits));
+		return Bits;
+	};
+	uint64_t Hash = 1469598103934665603ULL;
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Pos.x));
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Pos.y));
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Vel.x));
+	Hash = Fingerprint(Hash, FloatBits(Core.m_Vel.y));
+	Hash = Fingerprint(Hash, Grounded ? 1 : 0);
+	Hash = Fingerprint(Hash, FloatBits(Context.m_ControlSpeed));
+	Hash = Fingerprint(Hash, FloatBits(Context.m_ControlAccel));
+	Hash = Fingerprint(Hash, FloatBits(Context.m_Friction));
+	Context.m_PhysicsFingerprint = Hash;
+	return Context.m_ControlSpeed >= 0.0f && Context.m_ControlAccel >= 0.0f && Context.m_Friction >= 0.0f;
 }
 
 bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
