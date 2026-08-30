@@ -523,39 +523,18 @@ void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 	if(Current == Held)
 		return;
 
-	const bool OtherHeld = Direction < 0 ? State.m_RightHeld : State.m_LeftHeld;
-	const bool WasOnlyOtherHeld = OtherHeld && !Current;
 	Current = Held;
 	State.m_Serial++;
-	if(Held)
-	{
-		State.m_LatestPressedDirection = Direction;
-		if(WasOnlyOtherHeld && IsSmartStopActive() && m_aSnapTapAppliedDirection[Dummy] == -Direction)
-		{
-			State.m_ArmSerial = State.m_Serial;
-			State.m_RequestedDirection = Direction;
-		}
-	}
-
-	// A release never creates ownership. It only cancels an in-flight brake when either
-	// participant is no longer held; a later genuine opposite press can arm a new one.
-	if(!State.m_LeftHeld || !State.m_RightHeld)
-	{
-		State.m_ArmSerial = 0;
-		State.m_RequestedDirection = 0;
-	}
 	m_aSmartDecisionCache[Dummy].m_Valid = false;
 }
 
-int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed, int ClassicDirection)
+int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed)
 {
 	const SSmartInputEventState &Event = m_aSmartInputEvent[Dummy];
 	if(!LeftPressed && !RightPressed)
 		return 0;
 	if(LeftPressed != RightPressed)
 		return LeftPressed ? -1 : 1;
-	if(Event.m_ArmSerial == 0 || Event.m_RequestedDirection == 0)
-		return ClassicDirection;
 
 	CGameClient::SGoresSmartStopContext Context;
 	const bool ContextValid = GameClient()->TryGetGoresSmartStopContext(Context);
@@ -564,31 +543,32 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	if(!ContextValid)
 	{
 		Cache.m_Valid = false;
-		return ClassicDirection;
+		return 0;
 	}
 	if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
 		Cache.m_DecisionTick == Context.m_DecisionTick &&
-		Cache.m_RequestedDirection == Event.m_RequestedDirection &&
 		Cache.m_PhysicsFingerprint == Context.m_PhysicsFingerprint)
 		return Cache.m_Direction;
 
 	const float Epsilon = 1.0f / 256.0f;
-	const int Direction = Event.m_RequestedDirection;
 	const float Velocity = Context.m_VelX;
+	int BrakeDirection = 0;
+	if(Velocity > Epsilon)
+		BrakeDirection = -1;
+	else if(Velocity < -Epsilon)
+		BrakeDirection = 1;
 	const float NeutralVelocity = Velocity * Context.m_Friction;
-	const float NewVelocity = SaturatedAdd(-Context.m_ControlSpeed, Context.m_ControlSpeed,
-		Velocity, Direction * Context.m_ControlAccel);
+	const float BrakeVelocity = SaturatedAdd(-Context.m_ControlSpeed, Context.m_ControlSpeed,
+		Velocity, BrakeDirection * Context.m_ControlAccel);
 
-	int Resolved = Direction;
-	if(std::abs(Velocity) > Epsilon && Velocity * Direction < 0.0f && NewVelocity * Direction < -Epsilon &&
-		std::abs(NeutralVelocity) + Epsilon < std::abs(NewVelocity))
-		Resolved = 0;
+	int Resolved = 0;
+	if(BrakeDirection != 0 && BrakeVelocity * BrakeDirection <= Epsilon &&
+		std::abs(BrakeVelocity) + Epsilon < std::abs(NeutralVelocity))
+		Resolved = BrakeDirection;
 
 	Cache.m_Valid = true;
 	Cache.m_InputSerial = Event.m_Serial;
 	Cache.m_DecisionTick = Context.m_DecisionTick;
-	Cache.m_PredictionGeneration = Context.m_PredictionGeneration;
-	Cache.m_RequestedDirection = Direction;
 	Cache.m_Direction = Resolved;
 	Cache.m_PhysicsFingerprint = Context.m_PhysicsFingerprint;
 	return Resolved;
@@ -628,10 +608,9 @@ int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightP
 
 	if(IsSnapTapActive() || !UseGammaInputMovement())
 	{
-		const int ClassicDirection = ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
 		if(IsSmartStopActive())
-			return ResolveSmartStopDirection(Dummy, LeftPressed, RightPressed, ClassicDirection);
-		return ClassicDirection;
+			return ResolveSmartStopDirection(Dummy, LeftPressed, RightPressed);
+		return ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
 	}
 
 	int Direction = 0;
