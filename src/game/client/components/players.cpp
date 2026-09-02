@@ -1678,18 +1678,16 @@ inline bool CPlayers::IsPlayerInfoAvailable(int ClientId) const
 	       GameClient()->m_Snap.m_apPlayerInfos[ClientId] != nullptr;
 }
 
-bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
+bool CPlayers::DoesHookDirectionHitTarget(int LocalClientId, int TargetClientId, vec2 Direction) const
 {
 	const auto &Local = GameClient()->m_aClients[LocalClientId];
 	const vec2 LocalPos = Local.m_RenderPos;
-	const vec2 TargetPos = GameClient()->m_aClients[TargetClientId].m_RenderPos;
 	const float HookLength = Local.m_Predicted.m_Tuning.m_HookLength;
 	const float HookFireSpeed = Local.m_Predicted.m_Tuning.m_HookFireSpeed;
 	static constexpr float HookStartDistance = CCharacterCore::PhysicalSize() * 1.5f;
-	if(HookLength < HookStartDistance || HookFireSpeed <= 0.0f || distance(LocalPos, TargetPos) <= 0.0f)
+	if(HookLength < HookStartDistance || HookFireSpeed <= 0.0f)
 		return false;
 
-	vec2 Direction = normalize(TargetPos - LocalPos);
 	vec2 BasePos = LocalPos;
 	vec2 SegmentStart = BasePos + Direction * HookStartDistance;
 	vec2 QuantizedDirection = Direction;
@@ -1759,6 +1757,31 @@ bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
 		BasePos = vTeleOuts[0];
 		SegmentStart = BasePos + Direction * HookStartDistance;
 		SegmentStart = vec2(round_to_int(SegmentStart.x), round_to_int(SegmentStart.y));
+	}
+	return false;
+}
+
+bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
+{
+	const vec2 Delta = GameClient()->m_aClients[TargetClientId].m_RenderPos - GameClient()->m_aClients[LocalClientId].m_RenderPos;
+	const float TargetDistance = length(Delta);
+	const float HitRadius = CCharacterCore::PhysicalSize() + 2.0f;
+	const float HookLength = GameClient()->m_aClients[LocalClientId].m_Predicted.m_Tuning.m_HookLength;
+	if(TargetDistance <= HitRadius || TargetDistance - HitRadius > HookLength)
+		return false;
+
+	const vec2 CenterDirection = Delta / TargetDistance;
+	const vec2 Perpendicular(-CenterDirection.y, CenterDirection.x);
+	const float EdgeAngle = std::asin(minimum(HitRadius / TargetDistance, 1.0f));
+	// Sample symmetrically inside the angular span of the target's hook collision circle.
+	// Staying slightly inside the tangents accounts for the strict player hit-radius test.
+	static constexpr float aAngleFactors[] = {0.0f, -0.95f, 0.95f, -0.75f, 0.75f, -0.5f, 0.5f, -0.25f, 0.25f};
+	for(const float Factor : aAngleFactors)
+	{
+		const float CandidateAngle = EdgeAngle * Factor;
+		const vec2 Direction = CenterDirection * std::cos(CandidateAngle) + Perpendicular * std::sin(CandidateAngle);
+		if(DoesHookDirectionHitTarget(LocalClientId, TargetClientId, Direction))
+			return true;
 	}
 	return false;
 }
