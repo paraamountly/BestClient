@@ -1934,7 +1934,7 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 			continue;
 		if(g_Config.m_BcFreezeRescueLinePossibleOnly && !Hookable)
 			continue;
-		vCandidates.push_back({TargetId, aFrozen[TargetId] ? 0 : m_aFreezeRescueFreezeTick[TargetId], aFrozen[TargetId] ? HookContactPos : m_aFreezeRescueInterceptPos[TargetId], Hookable, !aFrozen[TargetId] || Hookable});
+		vCandidates.push_back({TargetId, aFrozen[TargetId] ? 0 : m_aFreezeRescueFreezeTick[TargetId], aFrozen[TargetId] ? HookContactPos : m_aFreezeRescueInterceptPos[TargetId], Hookable, !aFrozen[TargetId]});
 	}
 
 	if(vCandidates.empty())
