@@ -4472,8 +4472,7 @@ void CGameClient::OnPredict()
 		const auto ValidSharedHorizon = [&](float Horizon) {
 			int SharedTick;
 			float SharedIntra;
-			GetGoresDisplayBaseTick(SharedTick, SharedIntra);
-			BcInputs::ApplyOffset(Horizon, SharedTick, SharedIntra);
+			GetGoresDisplayTick(Horizon, SharedTick, SharedIntra);
 			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 			{
 				if(!m_aGoresInteractionGroup[ClientId])
@@ -6158,10 +6157,24 @@ void CGameClient::GetGoresDisplayBaseTick(int &Tick, float &Intra)
 	}
 }
 
-bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra)
+void CGameClient::GetGoresDisplayTick(float Horizon, int &Tick, float &Intra)
 {
 	GetGoresDisplayBaseTick(Tick, Intra);
-	BcInputs::ApplyOffset(GetGoresDisplayHorizon(ClientId), Tick, Intra);
+	BcInputs::ApplyOffset(Horizon, Tick, Intra);
+
+	// The current generation starts at GameTick, so its first complete interpolation
+	// pair is [GameTick, GameTick + 1]. Never request the unseeded GameTick - 1 sample.
+	const int FirstInterpolationTick = Client()->GameTick(g_Config.m_ClDummy) + 1;
+	if(g_Config.m_TcRemoveAnti && Tick < FirstInterpolationTick)
+	{
+		Tick = FirstInterpolationTick;
+		Intra = 0.0f;
+	}
+}
+
+bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra)
+{
+	GetGoresDisplayTick(GetGoresDisplayHorizon(ClientId), Tick, Intra);
 
 	if(Tick > 0 &&
 		m_aClients[ClientId].m_aGoresPredTick[(Tick - 1) % 200] == Tick - 1 &&

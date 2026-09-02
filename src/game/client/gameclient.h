@@ -1153,6 +1153,7 @@ private:
 	void UpdateRenderedCharacters();
 	float GetGoresDisplayHorizon(int ClientId) const;
 	void GetGoresDisplayBaseTick(int &Tick, float &Intra);
+	void GetGoresDisplayTick(float Horizon, int &Tick, float &Intra);
 	bool ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra);
 	void HandlePredictedEvents(int Tick);
 
