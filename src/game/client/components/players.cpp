@@ -23,6 +23,7 @@
 #include <game/client/components/skins.h>
 #include <game/client/components/sounds.h>
 #include <game/client/gameclient.h>
+#include <game/client/prediction/gameworld.h>
 #include <game/collision.h>
 #include <game/gamecore.h>
 #include <game/mapitems.h>
@@ -1677,25 +1678,25 @@ inline bool CPlayers::IsPlayerInfoAvailable(int ClientId) const
 	       GameClient()->m_Snap.m_apPlayerInfos[ClientId] != nullptr;
 }
 
-bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
+bool CPlayers::DoesHookDirectionHitTarget(int LocalClientId, int TargetClientId, vec2 Direction, vec2 *pContactPos, bool *pMapBlocked) const
 {
+	if(pMapBlocked)
+		*pMapBlocked = false;
 	const auto &Local = GameClient()->m_aClients[LocalClientId];
 	const vec2 LocalPos = Local.m_RenderPos;
-	const vec2 TargetPos = GameClient()->m_aClients[TargetClientId].m_RenderPos;
 	const float HookLength = Local.m_Predicted.m_Tuning.m_HookLength;
 	const float HookFireSpeed = Local.m_Predicted.m_Tuning.m_HookFireSpeed;
 	static constexpr float HookStartDistance = CCharacterCore::PhysicalSize() * 1.5f;
-	if(HookLength < HookStartDistance || HookFireSpeed <= 0.0f || distance(LocalPos, TargetPos) <= 0.0f)
+	if(HookLength < HookStartDistance || HookFireSpeed <= 0.0f)
 		return false;
 
-	vec2 Direction = normalize(TargetPos - LocalPos);
 	vec2 BasePos = LocalPos;
 	vec2 SegmentStart = BasePos + Direction * HookStartDistance;
 	vec2 QuantizedDirection = Direction;
 	bool EnteredTelehook = false;
 	const int MaxHookTicks = 5 * Client()->GameTickSpeed();
 
-	auto FirstHookablePlayer = [&](vec2 From, vec2 To) {
+	auto FirstHookablePlayer = [&](vec2 From, vec2 To, vec2 *pClosestPoint) {
 		int ClosestId = -1;
 		float ClosestDistance = 0.0f;
 		for(int ClientId = 0; ClientId < MAX_CLIENTS; ++ClientId)
@@ -1718,6 +1719,7 @@ bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
 				{
 					ClosestId = ClientId;
 					ClosestDistance = CandidateDistance;
+					*pClosestPoint = ClosestPoint;
 				}
 			}
 		}
@@ -1735,11 +1737,21 @@ bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
 		}
 
 		int Tele = 0;
-		vec2 HitPos;
+		vec2 HitPos, PlayerHitPos;
 		const int Hit = Collision()->IntersectLineTeleHook(SegmentStart, SegmentEnd, &HitPos, nullptr, &Tele);
-		const int HookedPlayer = FirstHookablePlayer(SegmentStart, HitPos);
+		const int HookedPlayer = FirstHookablePlayer(SegmentStart, HitPos, &PlayerHitPos);
 		if(HookedPlayer != -1)
+		{
+			if(HookedPlayer == TargetClientId && pContactPos)
+			{
+				vec2 aIntersections[2];
+				const int NumIntersections = intersect_line_circle(SegmentStart, HitPos, GameClient()->m_aClients[TargetClientId].m_RenderPos, CCharacterCore::PhysicalSize() + 2.0f, aIntersections);
+				*pContactPos = NumIntersections > 0 ? aIntersections[0] : PlayerHitPos;
+				if(NumIntersections == 2 && distance(SegmentStart, aIntersections[1]) < distance(SegmentStart, aIntersections[0]))
+					*pContactPos = aIntersections[1];
+			}
 			return HookedPlayer == TargetClientId;
+		}
 		if(distance(BasePos, SegmentEnd) >= HookLength)
 			return false;
 		if(!Hit)
@@ -1750,7 +1762,11 @@ bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
 			continue;
 		}
 		if(Hit != TILE_TELEINHOOK)
+		{
+			if(pMapBlocked)
+				*pMapBlocked = true;
 			return false;
+		}
 		const std::vector<vec2> &vTeleOuts = Collision()->TeleOuts(Tele - 1);
 		if(vTeleOuts.size() != 1)
 			return false;
@@ -1759,6 +1775,39 @@ bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId) const
 		SegmentStart = BasePos + Direction * HookStartDistance;
 		SegmentStart = vec2(round_to_int(SegmentStart.x), round_to_int(SegmentStart.y));
 	}
+	return false;
+}
+
+bool CPlayers::DirectHookHitsTarget(int LocalClientId, int TargetClientId, vec2 *pContactPos, bool *pFullyMapOccluded) const
+{
+	const vec2 Delta = GameClient()->m_aClients[TargetClientId].m_RenderPos - GameClient()->m_aClients[LocalClientId].m_RenderPos;
+	const float TargetDistance = length(Delta);
+	const float HitRadius = CCharacterCore::PhysicalSize() + 2.0f;
+	if(TargetDistance <= HitRadius)
+		return false;
+
+	const vec2 CenterDirection = Delta / TargetDistance;
+	const vec2 Perpendicular(-CenterDirection.y, CenterDirection.x);
+	const float EdgeAngle = std::asin(minimum(HitRadius / TargetDistance, 1.0f));
+	// Sample symmetrically inside the angular span of the target's hook collision circle.
+	// Staying slightly inside the tangents accounts for the strict player hit-radius test.
+	static constexpr float aAngleFactors[] = {0.0f, -0.95f, 0.95f, -0.75f, 0.75f, -0.5f, 0.5f, -0.25f, 0.25f};
+	bool FullyMapOccluded = true;
+	for(const float Factor : aAngleFactors)
+	{
+		const float CandidateAngle = EdgeAngle * Factor;
+		const vec2 Direction = CenterDirection * std::cos(CandidateAngle) + Perpendicular * std::sin(CandidateAngle);
+		bool MapBlocked = false;
+		if(DoesHookDirectionHitTarget(LocalClientId, TargetClientId, Direction, pContactPos, &MapBlocked))
+		{
+			if(pFullyMapOccluded)
+				*pFullyMapOccluded = false;
+			return true;
+		}
+		FullyMapOccluded &= MapBlocked;
+	}
+	if(pFullyMapOccluded)
+		*pFullyMapOccluded = FullyMapOccluded;
 	return false;
 }
 
@@ -1776,12 +1825,94 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 	const float MaxDistance = HookLength * g_Config.m_BcFreezeRescueLineMaxRange / 100.0f;
 	const bool PracticeActive = GameClient()->m_FastPractice.Active();
 	const float Alpha = g_Config.m_BcFreezeRescueLineAlpha / 100.0f;
+	const int MaxPredictionTicks = maximum(1, (g_Config.m_BcFreezeRescueLineMaxFreezeTime * Client()->GameTickSpeed() + 999) / 1000);
+	struct SRescueCandidate
+	{
+		int m_ClientId;
+		int m_FreezeTick;
+		vec2 m_InterceptPos;
+		bool m_Hookable;
+		bool m_InterceptValid;
+	};
+	std::vector<SRescueCandidate> vCandidates;
+	if(g_Config.m_BcFreezeRescueLinePredictFalls)
+	{
+		bool AnyTrajectoryTarget = false;
+		for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
+		{
+			if(TargetId != LocalClientId && IsPlayerInfoAvailable(TargetId) && GameClient()->m_PredictedWorld.GetCharacterById(TargetId))
+				AnyTrajectoryTarget = true;
+		}
 
-	Graphics()->TextureClear();
-	Graphics()->LinesBegin();
+		if(!AnyTrajectoryTarget)
+		{
+			m_FreezeRescuePredictionBaseTick = -1;
+			return;
+		}
+
+		const int PredictionBaseTick = GameClient()->m_PredictedWorld.GameTick();
+		const bool RefreshPrediction = PredictionBaseTick != m_FreezeRescuePredictionBaseTick ||
+					       g_Config.m_BcFreezeRescueLineMaxFreezeTime != m_FreezeRescuePredictionMaxFreezeTime ||
+					       g_Config.m_BcFreezeRescueLineIgnoreSafeLandings != m_FreezeRescuePredictionIgnoreSafeLandings;
+		if(RefreshPrediction)
+		{
+			m_FreezeRescuePredictionBaseTick = PredictionBaseTick;
+			m_FreezeRescuePredictionMaxFreezeTime = g_Config.m_BcFreezeRescueLineMaxFreezeTime;
+			m_FreezeRescuePredictionIgnoreSafeLandings = g_Config.m_BcFreezeRescueLineIgnoreSafeLandings;
+			bool aWasAirborne[MAX_CLIENTS] = {};
+			for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
+			{
+				m_aFreezeRescueDangerous[TargetId] = TargetId != LocalClientId && IsPlayerInfoAvailable(TargetId) && aFrozen[TargetId];
+				m_aFreezeRescueSafeLanding[TargetId] = false;
+				m_aFreezeRescueFreezeTick[TargetId] = 0;
+				m_aFreezeRescueInterceptPos[TargetId] = GameClient()->m_aClients[TargetId].m_RenderPos;
+			}
+
+			// Continue the already predicted world with its existing character/tile physics.
+			// This visual-only copy is refreshed by prediction identity, not render cadence.
+			CGameWorld RescueWorld;
+			RescueWorld.Init(Collision(), GameClient()->m_PredictedWorld.TuningList(), nullptr);
+			RescueWorld.CopyWorldClean(&GameClient()->m_PredictedWorld);
+			for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
+				if(TargetId != LocalClientId)
+					if(CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId))
+						aWasAirborne[TargetId] = !pCharacter->IsGrounded();
+
+			for(int Tick = 1; Tick <= MaxPredictionTicks; ++Tick)
+			{
+				RescueWorld.m_GameTick = PredictionBaseTick + Tick;
+				RescueWorld.Tick();
+				for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
+				{
+					if(TargetId == LocalClientId || m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])
+						continue;
+					CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId);
+					if(!pCharacter)
+						continue;
+					const CCharacterCore *pCore = pCharacter->Core();
+					const bool Frozen = pCharacter->m_FreezeTime > 0 || pCore->m_FreezeEnd != 0 || pCore->m_DeepFrozen || pCore->m_LiveFrozen || pCore->m_IsInFreeze;
+					if(Frozen)
+					{
+						m_aFreezeRescueDangerous[TargetId] = true;
+						m_aFreezeRescueFreezeTick[TargetId] = Tick;
+						continue;
+					}
+					m_aFreezeRescueInterceptPos[TargetId] = pCore->m_Pos;
+					const bool Grounded = pCharacter->IsGrounded();
+					if(g_Config.m_BcFreezeRescueLineIgnoreSafeLandings && aWasAirborne[TargetId] && Grounded)
+						m_aFreezeRescueSafeLanding[TargetId] = true;
+					aWasAirborne[TargetId] |= !Grounded;
+				}
+			}
+		}
+	}
+	else
+		m_FreezeRescuePredictionBaseTick = -1;
+
 	for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 	{
-		if(TargetId == LocalClientId || !aFrozen[TargetId] || !IsPlayerInfoAvailable(TargetId) || GameClient()->IsOtherTeam(TargetId))
+		if(TargetId == LocalClientId || !IsPlayerInfoAvailable(TargetId) || GameClient()->IsOtherTeam(TargetId) ||
+			(!aFrozen[TargetId] && (!g_Config.m_BcFreezeRescueLinePredictFalls || !m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])))
 			continue;
 		const auto &Target = GameClient()->m_aClients[TargetId];
 		const bool IsOneSuper = Local.m_Super || Target.m_Super;
@@ -1796,11 +1927,48 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		const float Distance = length(Delta);
 		if(Distance > MaxDistance || Distance <= CCharacterCore::PhysicalSize())
 			continue;
-		const vec2 Direction = Delta / Distance;
-		const float Inset = minimum(CCharacterCore::PhysicalSize(), Distance * 0.4f);
-		const vec2 Start = Local.m_RenderPos + Direction * Inset;
-		const vec2 End = Target.m_RenderPos - Direction * Inset;
-		const bool Hookable = DirectHookHitsTarget(LocalClientId, TargetId);
+		vec2 HookContactPos = Target.m_RenderPos;
+		bool FullyMapOccluded = false;
+		const bool Hookable = DirectHookHitsTarget(LocalClientId, TargetId, &HookContactPos, &FullyMapOccluded);
+		if(FullyMapOccluded)
+			continue;
+		if(g_Config.m_BcFreezeRescueLinePossibleOnly && !Hookable)
+			continue;
+		vCandidates.push_back({TargetId, aFrozen[TargetId] ? 0 : m_aFreezeRescueFreezeTick[TargetId], aFrozen[TargetId] ? HookContactPos : m_aFreezeRescueInterceptPos[TargetId], Hookable, !aFrozen[TargetId]});
+	}
+
+	if(vCandidates.empty())
+	{
+		m_FreezeRescueTargetId = -1;
+		m_FreezeRescueLockUntilTick = -1;
+		return;
+	}
+
+	auto Urgency = [](const SRescueCandidate &Candidate) { return Candidate.m_FreezeTick; };
+	auto Best = std::min_element(vCandidates.begin(), vCandidates.end(), [&](const auto &Left, const auto &Right) { return Urgency(Left) < Urgency(Right); });
+	const int Now = Client()->GameTick(g_Config.m_ClDummy);
+	auto Locked = std::find_if(vCandidates.begin(), vCandidates.end(), [&](const auto &Candidate) { return Candidate.m_ClientId == m_FreezeRescueTargetId; });
+	// Five ticks is enough to reject near-equal ordering noise while still allowing a
+	// clearly earlier freeze to supersede the lock immediately.
+	if(Locked != vCandidates.end() && Now < m_FreezeRescueLockUntilTick && Urgency(*Best) + 5 >= Urgency(*Locked))
+		Best = Locked;
+	if(Best->m_ClientId != m_FreezeRescueTargetId)
+	{
+		m_FreezeRescueTargetId = Best->m_ClientId;
+		m_FreezeRescueLockUntilTick = Now + (g_Config.m_BcFreezeRescueLineTargetLockTime * Client()->GameTickSpeed() + 999) / 1000;
+	}
+
+	const auto &Target = GameClient()->m_aClients[Best->m_ClientId];
+	const vec2 Delta = Target.m_RenderPos - Local.m_RenderPos;
+	const float Distance = length(Delta);
+	const vec2 Direction = Delta / Distance;
+	const float Inset = minimum(CCharacterCore::PhysicalSize(), Distance * 0.4f);
+	const vec2 Start = Local.m_RenderPos + Direction * Inset;
+	const vec2 End = Target.m_RenderPos - Direction * Inset;
+	Graphics()->TextureClear();
+	Graphics()->LinesBegin();
+	{
+		const bool Hookable = Best->m_Hookable;
 		ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(Hookable ? g_Config.m_BcFreezeRescueLineHookableColor : g_Config.m_BcFreezeRescueLineUnhookableColor));
 		Graphics()->SetColor(Color.WithMultipliedAlpha(Alpha));
 		if(Hookable)
@@ -1820,6 +1988,16 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		}
 	}
 	Graphics()->LinesEnd();
+
+	if(g_Config.m_BcFreezeRescueLineInterceptPoint && Best->m_InterceptValid)
+	{
+		const float Radius = 5.0f * GameClient()->m_Camera.m_Zoom;
+		Graphics()->QuadsBegin();
+		ColorRGBA Color = color_cast<ColorRGBA>(ColorHSLA(Best->m_Hookable ? g_Config.m_BcFreezeRescueLineHookableColor : g_Config.m_BcFreezeRescueLineUnhookableColor));
+		Graphics()->SetColor(Color.WithMultipliedAlpha(Alpha));
+		Graphics()->DrawCircle(Best->m_InterceptPos.x, Best->m_InterceptPos.y, Radius, 12);
+		Graphics()->QuadsEnd();
+	}
 }
 
 void CPlayers::OnRender()

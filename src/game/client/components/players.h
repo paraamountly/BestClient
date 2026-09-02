@@ -38,7 +38,8 @@ class CPlayers : public CComponent
 		const CNetObj_Character *pPrevChar,
 		const CNetObj_Character *pPlayerChar,
 		int ClientId);
-	bool DirectHookHitsTarget(int LocalClientId, int TargetClientId) const;
+	bool DoesHookDirectionHitTarget(int LocalClientId, int TargetClientId, vec2 Direction, vec2 *pContactPos, bool *pMapBlocked) const;
+	bool DirectHookHitsTarget(int LocalClientId, int TargetClientId, vec2 *pContactPos = nullptr, bool *pFullyMapOccluded = nullptr) const;
 	void RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int LocalClientId);
 	bool IsPlayerInfoAvailable(int ClientId) const;
 
@@ -50,6 +51,15 @@ class CPlayers : public CComponent
 
 	std::shared_ptr<CManagedTeeRenderInfo> m_pNinjaTeeRenderInfo;
 	std::shared_ptr<CManagedTeeRenderInfo> m_pSpectatorTeeRenderInfo;
+	int m_FreezeRescueTargetId = -1;
+	int m_FreezeRescueLockUntilTick = -1;
+	int m_FreezeRescuePredictionBaseTick = -1;
+	int m_FreezeRescuePredictionMaxFreezeTime = -1;
+	int m_FreezeRescuePredictionIgnoreSafeLandings = -1;
+	bool m_aFreezeRescueDangerous[MAX_CLIENTS] = {};
+	bool m_aFreezeRescueSafeLanding[MAX_CLIENTS] = {};
+	int m_aFreezeRescueFreezeTick[MAX_CLIENTS] = {};
+	vec2 m_aFreezeRescueInterceptPos[MAX_CLIENTS] = {};
 
 public:
 	float GetPlayerTargetAngle(
