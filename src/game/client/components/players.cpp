@@ -1787,10 +1787,12 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 	};
 	std::vector<SRescueCandidate> vCandidates;
 	bool aEligible[MAX_CLIENTS] = {};
-	bool aSafeLanding[MAX_CLIENTS] = {};
-	bool aDangerous[MAX_CLIENTS] = {};
-	int aFreezeTick[MAX_CLIENTS] = {};
-	vec2 aInterceptPos[MAX_CLIENTS];
+	bool AnyEligible = false;
+	uint64_t PredictionState = 1469598103934665603ULL;
+	auto AddPredictionState = [&](int Value) {
+		PredictionState ^= static_cast<uint32_t>(Value);
+		PredictionState *= 1099511628211ULL;
+	};
 
 	for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 	{
@@ -1805,42 +1807,80 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		if(Local.m_RenderCur.m_HookedPlayer == TargetId || Local.m_RenderPrev.m_HookedPlayer == TargetId)
 			continue;
 		aEligible[TargetId] = true;
-		aDangerous[TargetId] = aFrozen[TargetId];
-		aInterceptPos[TargetId] = Target.m_RenderPos;
+		AnyEligible = true;
+		const CCharacterCore &Core = Target.m_Predicted;
+		AddPredictionState(TargetId);
+		AddPredictionState(round_to_int(Core.m_Pos.x * 256.0f));
+		AddPredictionState(round_to_int(Core.m_Pos.y * 256.0f));
+		AddPredictionState(round_to_int(Core.m_Vel.x * 256.0f));
+		AddPredictionState(round_to_int(Core.m_Vel.y * 256.0f));
+		AddPredictionState(aFrozen[TargetId]);
 	}
 
-	// Continue the already predicted world with its existing character/tile physics. The
-	// copy is visual-only and lets every eligible tee share one trajectory simulation.
-	CGameWorld RescueWorld;
-	RescueWorld.Init(Collision(), GameClient()->m_PredictedWorld.TuningList(), nullptr);
-	RescueWorld.CopyWorldClean(&GameClient()->m_PredictedWorld);
-	for(int Tick = 1; Tick <= MaxPredictionTicks; ++Tick)
+	if(!AnyEligible)
+		return;
+
+	const int PredictionBaseTick = GameClient()->m_PredictedWorld.GameTick();
+	const bool RefreshPrediction = PredictionBaseTick != m_FreezeRescuePredictionBaseTick ||
+				       MaxPredictionTicks != m_FreezeRescuePredictionMaxTicks ||
+				       g_Config.m_BcFreezeRescueLineIgnoreSafeLandings != m_FreezeRescuePredictionIgnoreSafeLandings ||
+				       PredictionState != m_FreezeRescuePredictionState;
+	if(RefreshPrediction)
 	{
-		RescueWorld.Tick();
+		m_FreezeRescuePredictionBaseTick = PredictionBaseTick;
+		m_FreezeRescuePredictionMaxTicks = MaxPredictionTicks;
+		m_FreezeRescuePredictionIgnoreSafeLandings = g_Config.m_BcFreezeRescueLineIgnoreSafeLandings;
+		m_FreezeRescuePredictionState = PredictionState;
+		bool aWasAirborne[MAX_CLIENTS] = {};
 		for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 		{
-			if(!aEligible[TargetId] || aDangerous[TargetId] || aSafeLanding[TargetId])
-				continue;
-			CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId);
-			if(!pCharacter)
-				continue;
-			const CCharacterCore *pCore = pCharacter->Core();
-			const bool Frozen = pCharacter->m_FreezeTime > 0 || pCore->m_FreezeEnd != 0 || pCore->m_DeepFrozen || pCore->m_LiveFrozen || pCore->m_IsInFreeze;
-			if(Frozen)
+			m_aFreezeRescueDangerous[TargetId] = aEligible[TargetId] && aFrozen[TargetId];
+			m_aFreezeRescueSafeLanding[TargetId] = false;
+			m_aFreezeRescueFreezeTick[TargetId] = 0;
+			m_aFreezeRescueInterceptPos[TargetId] = GameClient()->m_aClients[TargetId].m_RenderPos;
+		}
+
+		// Continue the already predicted world with its existing character/tile physics.
+		// This visual-only copy is refreshed by prediction identity, not render cadence.
+		CGameWorld RescueWorld;
+		RescueWorld.Init(Collision(), GameClient()->m_PredictedWorld.TuningList(), nullptr);
+		RescueWorld.CopyWorldClean(&GameClient()->m_PredictedWorld);
+		for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
+			if(aEligible[TargetId])
+				if(CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId))
+					aWasAirborne[TargetId] = !pCharacter->IsGrounded();
+
+		for(int Tick = 1; Tick <= MaxPredictionTicks; ++Tick)
+		{
+			RescueWorld.m_GameTick = PredictionBaseTick + Tick;
+			RescueWorld.Tick();
+			for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 			{
-				aDangerous[TargetId] = true;
-				aFreezeTick[TargetId] = Tick;
-				continue;
+				if(!aEligible[TargetId] || m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])
+					continue;
+				CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId);
+				if(!pCharacter)
+					continue;
+				const CCharacterCore *pCore = pCharacter->Core();
+				const bool Frozen = pCharacter->m_FreezeTime > 0 || pCore->m_FreezeEnd != 0 || pCore->m_DeepFrozen || pCore->m_LiveFrozen || pCore->m_IsInFreeze;
+				if(Frozen)
+				{
+					m_aFreezeRescueDangerous[TargetId] = true;
+					m_aFreezeRescueFreezeTick[TargetId] = Tick;
+					continue;
+				}
+				m_aFreezeRescueInterceptPos[TargetId] = pCore->m_Pos;
+				const bool Grounded = pCharacter->IsGrounded();
+				if(g_Config.m_BcFreezeRescueLineIgnoreSafeLandings && aWasAirborne[TargetId] && Grounded)
+					m_aFreezeRescueSafeLanding[TargetId] = true;
+				aWasAirborne[TargetId] |= !Grounded;
 			}
-			aInterceptPos[TargetId] = pCore->m_Pos;
-			if(g_Config.m_BcFreezeRescueLineIgnoreSafeLandings && pCharacter->IsGrounded())
-				aSafeLanding[TargetId] = true;
 		}
 	}
 
 	for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 	{
-		if(!aEligible[TargetId] || !aDangerous[TargetId] || aSafeLanding[TargetId])
+		if(!aEligible[TargetId] || !m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])
 			continue;
 		const auto &Target = GameClient()->m_aClients[TargetId];
 
@@ -1851,7 +1891,7 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		const bool Hookable = DirectHookHitsTarget(LocalClientId, TargetId);
 		if(g_Config.m_BcFreezeRescueLinePossibleOnly && !Hookable)
 			continue;
-		vCandidates.push_back({TargetId, aFreezeTick[TargetId], aInterceptPos[TargetId], Hookable});
+		vCandidates.push_back({TargetId, m_aFreezeRescueFreezeTick[TargetId], m_aFreezeRescueInterceptPos[TargetId], Hookable});
 	}
 
 	if(vCandidates.empty())

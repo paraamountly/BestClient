@@ -52,6 +52,14 @@ class CPlayers : public CComponent
 	std::shared_ptr<CManagedTeeRenderInfo> m_pSpectatorTeeRenderInfo;
 	int m_FreezeRescueTargetId = -1;
 	int m_FreezeRescueLockUntilTick = -1;
+	int m_FreezeRescuePredictionBaseTick = -1;
+	int m_FreezeRescuePredictionMaxTicks = -1;
+	int m_FreezeRescuePredictionIgnoreSafeLandings = -1;
+	uint64_t m_FreezeRescuePredictionState = 0;
+	bool m_aFreezeRescueDangerous[MAX_CLIENTS] = {};
+	bool m_aFreezeRescueSafeLanding[MAX_CLIENTS] = {};
+	int m_aFreezeRescueFreezeTick[MAX_CLIENTS] = {};
+	vec2 m_aFreezeRescueInterceptPos[MAX_CLIENTS] = {};
 
 public:
 	float GetPlayerTargetAngle(
