@@ -38,8 +38,8 @@ class CPlayers : public CComponent
 		const CNetObj_Character *pPrevChar,
 		const CNetObj_Character *pPlayerChar,
 		int ClientId);
-	bool DoesHookDirectionHitTarget(int LocalClientId, int TargetClientId, vec2 Direction) const;
-	bool DirectHookHitsTarget(int LocalClientId, int TargetClientId) const;
+	bool DoesHookDirectionHitTarget(int LocalClientId, int TargetClientId, vec2 Direction, vec2 *pContactPos, bool *pMapBlocked) const;
+	bool DirectHookHitsTarget(int LocalClientId, int TargetClientId, vec2 *pContactPos = nullptr, bool *pFullyMapOccluded = nullptr) const;
 	void RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int LocalClientId);
 	bool IsPlayerInfoAvailable(int ClientId) const;
 

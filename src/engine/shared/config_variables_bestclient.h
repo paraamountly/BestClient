@@ -166,6 +166,7 @@ MACRO_CONFIG_INT(BcFreezeRescueLineMaxFreezeTime, bc_freeze_rescue_line_max_free
 MACRO_CONFIG_INT(BcFreezeRescueLineTargetLockTime, bc_freeze_rescue_line_target_lock_time, 350, 0, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue target lock time in milliseconds")
 MACRO_CONFIG_INT(BcFreezeRescueLineInterceptPoint, bc_freeze_rescue_line_intercept_point, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the predicted freeze rescue intercept point")
 MACRO_CONFIG_INT(BcFreezeRescueLineIgnoreSafeLandings, bc_freeze_rescue_line_ignore_safe_landings, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ignore predicted trajectories that land safely before reaching freeze")
+MACRO_CONFIG_INT(BcFreezeRescueLinePredictFalls, bc_freeze_rescue_line_predict_falls, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Predict unfrozen teammates falling into freeze")
 
 // Swap timer
 MACRO_CONFIG_INT(BcSwapTimer, bc_swap_timer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a HUD timer for pending swap requests")

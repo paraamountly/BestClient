@@ -2888,7 +2888,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 
 	const float FreezeRescueColorLineSize = 25.0f;
 	const float FreezeRescueBlockHeight = LineSize + MarginSmall + LineSize + MarginSmall + LineSize +
-					      2.0f * (FreezeRescueColorLineSize + MarginSmall) + 7.0f * (LineSize + MarginSmall);
+					      2.0f * (FreezeRescueColorLineSize + MarginSmall) + 8.0f * (LineSize + MarginSmall);
 	CUIRect FreezeRescueBlock;
 	RightColumn.HSplitTop(FreezeRescueBlockHeight, &FreezeRescueBlock, &RightColumn);
 	CUIRect FreezeRescueBlockBg = FreezeRescueBlock;
@@ -2932,6 +2932,9 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
 	FreezeRescueBlock.HSplitTop(LineSize, &Content, &FreezeRescueBlock);
 	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFreezeRescueLineInterceptPoint, Localize("Show predicted intercept point"), &g_Config.m_BcFreezeRescueLineInterceptPoint, &Content, LineSize);
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Content, &FreezeRescueBlock);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFreezeRescueLinePredictFalls, Localize("Predict falling tees"), &g_Config.m_BcFreezeRescueLinePredictFalls, &Content, LineSize);
 
 	RightColumn.HSplitTop(MarginBetweenViews, nullptr, &RightColumn);
 
