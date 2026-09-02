@@ -1843,7 +1843,7 @@ void CPlayers::OnRender()
 		if(UsesPredictedFreezeState || GameClient()->m_aClients[i].m_GoresRenderSampleValid)
 		{
 			const auto &ClientData = GameClient()->m_aClients[i];
-			const auto &GoresSample = ClientData.m_aGoresRenderSample[ClientData.m_GoresRenderTick % 200];
+			const auto &GoresSample = ClientData.m_aGoresRenderSample[ClientData.m_GoresRenderSampleTick % 200];
 			const int FreezeEnd = ClientData.m_GoresRenderSampleValid ? GoresSample.m_FreezeEnd : ClientData.m_Predicted.m_FreezeEnd;
 			const bool LiveFrozenAtDisplay = ClientData.m_GoresRenderSampleValid ? GoresSample.m_LiveFrozen : ClientData.m_Predicted.m_LiveFrozen;
 			const bool InvincibleAtDisplay = ClientData.m_GoresRenderSampleValid ? GoresSample.m_Invincible : ClientData.m_Predicted.m_Invincible;
@@ -1872,7 +1872,7 @@ void CPlayers::OnRender()
 			Frozen = GameClient()->m_Snap.m_aCharacters[i].m_HasExtendedData && GameClient()->m_Snap.m_aCharacters[i].m_ExtendedData.m_FreezeEnd != 0;
 		}
 		const bool LiveFrozen = (UsesPredictedFreezeState || GameClient()->m_aClients[i].m_GoresRenderSampleValid) ?
-						(GameClient()->m_aClients[i].m_GoresRenderSampleValid ? GameClient()->m_aClients[i].m_aGoresRenderSample[GameClient()->m_aClients[i].m_GoresRenderTick % 200].m_LiveFrozen : GameClient()->m_aClients[i].m_Predicted.m_LiveFrozen) :
+						(GameClient()->m_aClients[i].m_GoresRenderSampleValid ? GameClient()->m_aClients[i].m_aGoresRenderSample[GameClient()->m_aClients[i].m_GoresRenderSampleTick % 200].m_LiveFrozen : GameClient()->m_aClients[i].m_Predicted.m_LiveFrozen) :
 						GameClient()->m_aClients[i].m_LiveFrozen;
 		aFrozen[i] = Frozen || LiveFrozen;
 

@@ -638,6 +638,7 @@ public:
 		} m_aGoresRenderSample[200];
 		float m_GoresRenderIntra = 0.0f;
 		int m_GoresRenderTick = 0;
+		int m_GoresRenderSampleTick = 0;
 		bool m_GoresRenderSampleValid = false;
 		struct SGoresPredictionState
 		{
@@ -1153,8 +1154,8 @@ private:
 	void UpdateRenderedCharacters();
 	float GetGoresDisplayHorizon(int ClientId) const;
 	void GetGoresDisplayBaseTick(int &Tick, float &Intra);
-	void GetGoresDisplayTick(float Horizon, int &Tick, float &Intra);
-	bool ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra);
+	bool GetGoresDisplayTick(float Horizon, int &Tick, float &Intra);
+	bool ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra, int &SampleTick);
 	void HandlePredictedEvents(int Tick);
 
 	// BestClient: optimizer

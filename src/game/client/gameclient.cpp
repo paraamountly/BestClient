@@ -4472,16 +4472,17 @@ void CGameClient::OnPredict()
 		const auto ValidSharedHorizon = [&](float Horizon) {
 			int SharedTick;
 			float SharedIntra;
-			GetGoresDisplayTick(Horizon, SharedTick, SharedIntra);
+			const bool SeededBoundary = GetGoresDisplayTick(Horizon, SharedTick, SharedIntra);
 			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 			{
 				if(!m_aGoresInteractionGroup[ClientId])
 					continue;
-				if(SharedTick <= 0 ||
-					m_aClients[ClientId].m_aGoresPredTick[(SharedTick - 1) % 200] != SharedTick - 1 ||
-					m_aClients[ClientId].m_aGoresPredTick[SharedTick % 200] != SharedTick ||
-					m_aClients[ClientId].m_aGoresPredGeneration[(SharedTick - 1) % 200] != m_GoresPredictionGeneration ||
-					m_aClients[ClientId].m_aGoresPredGeneration[SharedTick % 200] != m_GoresPredictionGeneration)
+				const int SampleTick = SeededBoundary ? SharedTick - 1 : SharedTick;
+				if(SampleTick <= 0 ||
+					m_aClients[ClientId].m_aGoresPredTick[SampleTick % 200] != SampleTick ||
+					m_aClients[ClientId].m_aGoresPredGeneration[SampleTick % 200] != m_GoresPredictionGeneration ||
+					(!SeededBoundary && (m_aClients[ClientId].m_aGoresPredTick[(SharedTick - 1) % 200] != SharedTick - 1 ||
+								    m_aClients[ClientId].m_aGoresPredGeneration[(SharedTick - 1) % 200] != m_GoresPredictionGeneration)))
 					return false;
 			}
 			return true;
@@ -4888,6 +4889,7 @@ void CGameClient::CClientData::Reset()
 	std::fill(std::begin(m_aGoresPredGeneration), std::end(m_aGoresPredGeneration), 0);
 	m_GoresRenderIntra = 0.0f;
 	m_GoresRenderTick = 0;
+	m_GoresRenderSampleTick = 0;
 	m_GoresRenderSampleValid = false;
 	m_GoresPrediction = {};
 	m_SpecCharPresent = false;
@@ -5677,7 +5679,8 @@ void CGameClient::UpdateRenderedCharacters()
 		{
 			int GoresRenderTick = 0;
 			float GoresRenderIntra = 0.0f;
-			const bool ExactGoresSample = IsGoresInputMode() && ResolveGoresDisplaySample(i, m_aClients[i].m_RenderPrev, m_aClients[i].m_RenderCur, Pos, GoresRenderTick, GoresRenderIntra);
+			int GoresRenderSampleTick = 0;
+			const bool ExactGoresSample = IsGoresInputMode() && ResolveGoresDisplaySample(i, m_aClients[i].m_RenderPrev, m_aClients[i].m_RenderCur, Pos, GoresRenderTick, GoresRenderIntra, GoresRenderSampleTick);
 			if(!ExactGoresSample)
 			{
 				m_aClients[i].m_Predicted.Write(&m_aClients[i].m_RenderCur);
@@ -5687,6 +5690,7 @@ void CGameClient::UpdateRenderedCharacters()
 			{
 				m_aClients[i].m_GoresRenderSampleValid = true;
 				m_aClients[i].m_GoresRenderTick = GoresRenderTick;
+				m_aClients[i].m_GoresRenderSampleTick = GoresRenderSampleTick;
 				m_aClients[i].m_GoresRenderIntra = GoresRenderIntra;
 			}
 
@@ -6109,7 +6113,8 @@ vec2 CGameClient::GetGoresInputPos(int ClientId)
 	vec2 Pos;
 	int Tick;
 	float Intra;
-	if(ResolveGoresDisplaySample(ClientId, Prev, Cur, Pos, Tick, Intra))
+	int SampleTick;
+	if(ResolveGoresDisplaySample(ClientId, Prev, Cur, Pos, Tick, Intra, SampleTick))
 		return Pos;
 
 	return mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, Client()->PredIntraGameTick(g_Config.m_ClDummy));
@@ -6157,7 +6162,7 @@ void CGameClient::GetGoresDisplayBaseTick(int &Tick, float &Intra)
 	}
 }
 
-void CGameClient::GetGoresDisplayTick(float Horizon, int &Tick, float &Intra)
+bool CGameClient::GetGoresDisplayTick(float Horizon, int &Tick, float &Intra)
 {
 	GetGoresDisplayBaseTick(Tick, Intra);
 	BcInputs::ApplyOffset(Horizon, Tick, Intra);
@@ -6169,12 +6174,28 @@ void CGameClient::GetGoresDisplayTick(float Horizon, int &Tick, float &Intra)
 	{
 		Tick = FirstInterpolationTick;
 		Intra = 0.0f;
+		return true;
 	}
+	return false;
 }
 
-bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra)
+bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra, int &SampleTick)
 {
-	GetGoresDisplayTick(GetGoresDisplayHorizon(ClientId), Tick, Intra);
+	const bool SeededBoundary = GetGoresDisplayTick(GetGoresDisplayHorizon(ClientId), Tick, Intra);
+	SampleTick = SeededBoundary ? Tick - 1 : Tick;
+	if(SeededBoundary)
+	{
+		if(m_aClients[ClientId].m_aGoresPredTick[SampleTick % 200] != SampleTick ||
+			m_aClients[ClientId].m_aGoresPredGeneration[SampleTick % 200] != m_GoresPredictionGeneration)
+			return false;
+		const auto &Sample = m_aClients[ClientId].m_aGoresRenderSample[SampleTick % 200];
+		static_cast<CNetObj_CharacterCore &>(Prev) = Sample.m_Core;
+		static_cast<CNetObj_CharacterCore &>(Cur) = Sample.m_Core;
+		Prev.m_AttackTick = Cur.m_AttackTick = Sample.m_AttackTick;
+		Prev.m_Weapon = Cur.m_Weapon = Sample.m_Weapon;
+		Pos = m_aClients[ClientId].m_aGoresPredPos[SampleTick % 200];
+		return true;
+	}
 
 	if(Tick > 0 &&
 		m_aClients[ClientId].m_aGoresPredTick[(Tick - 1) % 200] == Tick - 1 &&
