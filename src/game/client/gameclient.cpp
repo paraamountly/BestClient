@@ -4451,7 +4451,8 @@ void CGameClient::OnPredict()
 			if(ClientId == m_Snap.m_LocalClientId)
 				continue;
 			auto &State = m_aClients[ClientId].m_GoresPrediction;
-			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId])
+			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId] &&
+				aGoresPredictedRemoteFreezeSafeHorizon[ClientId] <= m_GoresAcceptedHorizon + 0.0001f)
 			{
 				State.m_ExpectedFreezeTick = aGoresPredictedRemoteFreezeTick[ClientId];
 				State.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
