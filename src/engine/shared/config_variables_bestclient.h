@@ -161,6 +161,11 @@ MACRO_CONFIG_COL(BcFreezeRescueLineHookableColor, bc_freeze_rescue_line_hookable
 MACRO_CONFIG_COL(BcFreezeRescueLineUnhookableColor, bc_freeze_rescue_line_unhookable_color, 0x00FF7F, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line unhookable color")
 MACRO_CONFIG_INT(BcFreezeRescueLineAlpha, bc_freeze_rescue_line_alpha, 70, 10, 100, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line opacity")
 MACRO_CONFIG_INT(BcFreezeRescueLineMaxRange, bc_freeze_rescue_line_max_range, 160, 100, 300, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue line range as a percentage of hook length")
+MACRO_CONFIG_INT(BcFreezeRescueLinePossibleOnly, bc_freeze_rescue_line_possible_only, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Only show the freeze rescue line when the target can currently be hooked")
+MACRO_CONFIG_INT(BcFreezeRescueLineMaxFreezeTime, bc_freeze_rescue_line_max_freeze_time, 900, 100, 3000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Maximum predicted time to freeze in milliseconds")
+MACRO_CONFIG_INT(BcFreezeRescueLineTargetLockTime, bc_freeze_rescue_line_target_lock_time, 350, 0, 2000, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Freeze rescue target lock time in milliseconds")
+MACRO_CONFIG_INT(BcFreezeRescueLineInterceptPoint, bc_freeze_rescue_line_intercept_point, 0, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show the predicted freeze rescue intercept point")
+MACRO_CONFIG_INT(BcFreezeRescueLineIgnoreSafeLandings, bc_freeze_rescue_line_ignore_safe_landings, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Ignore predicted trajectories that land safely before reaching freeze")
 
 // Swap timer
 MACRO_CONFIG_INT(BcSwapTimer, bc_swap_timer, 1, 0, 1, CFGFLAG_CLIENT | CFGFLAG_SAVE, "Show a HUD timer for pending swap requests")

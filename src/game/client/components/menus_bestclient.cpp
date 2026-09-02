@@ -2725,9 +2725,9 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	UpdateModuleRevealPhase(s_FinishPredictionTimeRevealPhase, FinishPredictionShowTimeOptions, Client()->RenderFrameTime());
 	const float FinishPredictionTimeExpandedHeight = (MarginSmall + LineSize) * 2.0f * BCUiAnimations::EaseOutCubic(s_FinishPredictionTimeRevealPhase); // Time left/Finish time + Show milliseconds
 	const float FinishPredictionExpandedTargetHeight = (MarginSmall + LineSize) // Show time checkbox
-							    + FinishPredictionTimeExpandedHeight
-							    + MarginSmall + LineSize // Show percentage checkbox
-							    + MarginSmall + LineSize; // Show always checkbox
+								    + FinishPredictionTimeExpandedHeight
+								    + MarginSmall + LineSize // Show percentage checkbox
+								    + MarginSmall + LineSize; // Show always checkbox
 	const float FinishPredictionExpandedHeight = FinishPredictionExpandedTargetHeight * BCUiAnimations::EaseOutCubic(s_FinishPredictionRevealPhase);
 	const float FinishPredictionBlockHeight = LineSize + MarginSmall + LineSize + FinishPredictionExpandedHeight;
 
@@ -2888,7 +2888,7 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 
 	const float FreezeRescueColorLineSize = 25.0f;
 	const float FreezeRescueBlockHeight = LineSize + MarginSmall + LineSize + MarginSmall + LineSize +
-					      2.0f * (FreezeRescueColorLineSize + MarginSmall) + 2.0f * (LineSize + MarginSmall);
+					      2.0f * (FreezeRescueColorLineSize + MarginSmall) + 7.0f * (LineSize + MarginSmall);
 	CUIRect FreezeRescueBlock;
 	RightColumn.HSplitTop(FreezeRescueBlockHeight, &FreezeRescueBlock, &RightColumn);
 	CUIRect FreezeRescueBlockBg = FreezeRescueBlock;
@@ -2917,6 +2917,21 @@ void CMenus::RenderSettingsBestClientGameplay(CUIRect MainView)
 	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
 	FreezeRescueBlock.HSplitTop(LineSize, &Button, &FreezeRescueBlock);
 	Ui()->DoScrollbarOption(&g_Config.m_BcFreezeRescueLineMaxRange, &g_Config.m_BcFreezeRescueLineMaxRange, &Button, Localize("Max range"), 100, 300, &CUi::ms_LinearScrollbarScale, 0, "% hook length");
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Button, &FreezeRescueBlock);
+	Ui()->DoScrollbarOption(&g_Config.m_BcFreezeRescueLineMaxFreezeTime, &g_Config.m_BcFreezeRescueLineMaxFreezeTime, &Button, Localize("Maximum time to freeze"), 100, 3000, &CUi::ms_LinearScrollbarScale, 0, " ms");
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Button, &FreezeRescueBlock);
+	Ui()->DoScrollbarOption(&g_Config.m_BcFreezeRescueLineTargetLockTime, &g_Config.m_BcFreezeRescueLineTargetLockTime, &Button, Localize("Target lock time"), 0, 2000, &CUi::ms_LinearScrollbarScale, 0, " ms");
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Content, &FreezeRescueBlock);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFreezeRescueLineIgnoreSafeLandings, Localize("Ignore safe landings"), &g_Config.m_BcFreezeRescueLineIgnoreSafeLandings, &Content, LineSize);
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Content, &FreezeRescueBlock);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFreezeRescueLinePossibleOnly, Localize("Only show if rescue is possible"), &g_Config.m_BcFreezeRescueLinePossibleOnly, &Content, LineSize);
+	FreezeRescueBlock.HSplitTop(MarginSmall, nullptr, &FreezeRescueBlock);
+	FreezeRescueBlock.HSplitTop(LineSize, &Content, &FreezeRescueBlock);
+	DoButton_CheckBoxAutoVMarginAndSet(&g_Config.m_BcFreezeRescueLineInterceptPoint, Localize("Show predicted intercept point"), &g_Config.m_BcFreezeRescueLineInterceptPoint, &Content, LineSize);
 
 	RightColumn.HSplitTop(MarginBetweenViews, nullptr, &RightColumn);
 

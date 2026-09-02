@@ -50,6 +50,8 @@ class CPlayers : public CComponent
 
 	std::shared_ptr<CManagedTeeRenderInfo> m_pNinjaTeeRenderInfo;
 	std::shared_ptr<CManagedTeeRenderInfo> m_pSpectatorTeeRenderInfo;
+	int m_FreezeRescueTargetId = -1;
+	int m_FreezeRescueLockUntilTick = -1;
 
 public:
 	float GetPlayerTargetAngle(
