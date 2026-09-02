@@ -3521,6 +3521,7 @@ void CGameClient::OnPredict()
 	bool aGoresPredictedRemoteFrozen[MAX_CLIENTS] = {};
 	bool GoresSharedHorizonDowngraded = false;
 	bool GoresLocalTrajectoryInvalid = false;
+	bool GoresSpeculativeDisplayCapped = false;
 	std::fill(std::begin(aGoresPredictedRemoteFreezeTick), std::end(aGoresPredictedRemoteFreezeTick), -1);
 
 	for(int Tick = Client()->GameTick(g_Config.m_ClDummy) + 1; Tick <= FinalTickSelf; Tick++)
@@ -4418,12 +4419,19 @@ void CGameClient::OnPredict()
 			m_aClients[m_Snap.m_LocalClientId].m_aGoresPredGeneration[LocalTargetTick % 200] == m_GoresPredictionGeneration;
 		if(ValidLocalFreezeTrajectory)
 		{
+			const int PreviousGeneration = m_GoresPredictionGeneration == 1 ? std::numeric_limits<int>::max() : m_GoresPredictionGeneration - 1;
+			const bool StableExpectedTransition = LocalState.m_ExpectedFreezeTick == GoresPredictedLocalTransitionTick &&
+							      LocalState.m_ExpectedFreezeGeneration == PreviousGeneration && LocalState.m_ExpectedFrozen == GoresPredictedLocalFrozen;
 			LocalState.m_ExpectedFreezeTick = GoresPredictedLocalTransitionTick;
 			LocalState.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
 			LocalState.m_ExpectedFrozen = GoresPredictedLocalFrozen;
-			// SafeHorizon resolves exactly to the transition tick at intra 0. Keep the
-			// displayed sample strictly before it until regular prediction confirms it.
-			m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, maximum(0.0f, GoresPredictedLocalTransitionSafeHorizon - 0.01f));
+			// Reject a new speculative transition for one generation. Repeated exact
+			// prediction is trusted instead of pinning the display before one absolute tick.
+			if(!StableExpectedTransition)
+			{
+				m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, maximum(0.0f, GoresPredictedLocalTransitionSafeHorizon - 0.01f));
+				GoresSpeculativeDisplayCapped = true;
+			}
 		}
 		else
 		{
@@ -4454,10 +4462,17 @@ void CGameClient::OnPredict()
 			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId] &&
 				aGoresPredictedRemoteFreezeSafeHorizon[ClientId] <= m_GoresAcceptedHorizon + 0.0001f)
 			{
+				const int PreviousGeneration = m_GoresPredictionGeneration == 1 ? std::numeric_limits<int>::max() : m_GoresPredictionGeneration - 1;
+				const bool StableExpectedTransition = State.m_ExpectedFreezeTick == aGoresPredictedRemoteFreezeTick[ClientId] &&
+								      State.m_ExpectedFreezeGeneration == PreviousGeneration && State.m_ExpectedFrozen == aGoresPredictedRemoteFrozen[ClientId];
 				State.m_ExpectedFreezeTick = aGoresPredictedRemoteFreezeTick[ClientId];
 				State.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
 				State.m_ExpectedFrozen = aGoresPredictedRemoteFrozen[ClientId];
-				m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, maximum(0.0f, aGoresPredictedRemoteFreezeSafeHorizon[ClientId] - 0.01f));
+				if(!StableExpectedTransition)
+				{
+					m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, maximum(0.0f, aGoresPredictedRemoteFreezeSafeHorizon[ClientId] - 0.01f));
+					GoresSpeculativeDisplayCapped = true;
+				}
 			}
 			else if(State.m_ExpectedFreezeTick > FinalTickRegular)
 			{
@@ -4515,10 +4530,12 @@ void CGameClient::OnPredict()
 			if(g_Config.m_BcGoresInputDebug)
 			{
 				const auto &LocalState = m_aClients[m_Snap.m_LocalClientId].m_GoresPrediction;
-				const char *pReason = GoresLocalTrajectoryInvalid ? "local_history" :
-					GoresSharedHorizonDowngraded ? "shared_history" :
-					LocalState.m_RecoveryDebt > 0 ? "freeze_recovery" :
-					m_GoresInteractionClientId >= 0 ? "interaction_cap" : "requested";
+				const char *pReason = GoresSpeculativeDisplayCapped   ? "speculative_transition" :
+						      GoresLocalTrajectoryInvalid     ? "local_history" :
+						      GoresSharedHorizonDowngraded    ? "shared_history" :
+						      LocalState.m_RecoveryDebt > 0   ? "freeze_recovery" :
+						      m_GoresInteractionClientId >= 0 ? "interaction_cap" :
+											"requested";
 				char aBuf[256];
 				str_format(aBuf, sizeof(aBuf), "local_horizon requested=%.2f old=%.2f new=%.2f reason=%s interaction=%d generation=%d",
 					m_GoresRequestedHorizon, m_GoresLastLoggedAcceptedHorizon, m_GoresAcceptedHorizon, pReason, m_GoresInteractionClientId, m_GoresPredictionGeneration);
