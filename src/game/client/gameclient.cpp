@@ -4041,7 +4041,7 @@ void CGameClient::OnPredict()
 		// m_PrevPredictedWorld.CopyWorld(&m_PrevRegularPredictedWorld); // not sure if this is worth performance cost, it seems to not matter
 	}
 
-	if(g_Config.m_TcRemoveAnti && !GoresInputMode)
+	if(g_Config.m_TcRemoveAnti)
 	{
 		m_ExtraPredictedWorld.CopyWorldClean(&m_PredictedWorld);
 
@@ -4421,6 +4421,9 @@ void CGameClient::OnPredict()
 			LocalState.m_ExpectedFreezeTick = GoresPredictedLocalTransitionTick;
 			LocalState.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
 			LocalState.m_ExpectedFrozen = GoresPredictedLocalFrozen;
+			// SafeHorizon resolves exactly to the transition tick at intra 0. Keep the
+			// displayed sample strictly before it until regular prediction confirms it.
+			m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, maximum(0.0f, GoresPredictedLocalTransitionSafeHorizon - 0.01f));
 		}
 		else
 		{
@@ -4441,11 +4444,34 @@ void CGameClient::OnPredict()
 		}
 	}
 
+	if(GoresInputMode)
+	{
+		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+		{
+			if(ClientId == m_Snap.m_LocalClientId)
+				continue;
+			auto &State = m_aClients[ClientId].m_GoresPrediction;
+			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId])
+			{
+				State.m_ExpectedFreezeTick = aGoresPredictedRemoteFreezeTick[ClientId];
+				State.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
+				State.m_ExpectedFrozen = aGoresPredictedRemoteFrozen[ClientId];
+				m_GoresAcceptedHorizon = minimum(m_GoresAcceptedHorizon, maximum(0.0f, aGoresPredictedRemoteFreezeSafeHorizon[ClientId] - 0.01f));
+			}
+			else if(State.m_ExpectedFreezeTick > FinalTickRegular)
+			{
+				State.m_ExpectedFreezeTick = -1;
+				State.m_ExpectedFreezeGeneration = 0;
+			}
+		}
+	}
+
 	if(GoresInputMode && m_GoresInteractionClientId >= 0 && m_GoresAcceptedHorizon > 0.0f)
 	{
 		const auto ValidSharedHorizon = [&](float Horizon) {
-			int SharedTick = Client()->PredGameTick(g_Config.m_ClDummy);
-			float SharedIntra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+			int SharedTick;
+			float SharedIntra;
+			GetGoresDisplayBaseTick(SharedTick, SharedIntra);
 			BcInputs::ApplyOffset(Horizon, SharedTick, SharedIntra);
 			for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
 			{
@@ -4476,28 +4502,6 @@ void CGameClient::OnPredict()
 			m_GoresAcceptedHorizon = ValidHorizon;
 			m_GoresHistoryFailureCount++;
 			GoresSharedHorizonDowngraded = true;
-		}
-	}
-
-	if(GoresInputMode)
-	{
-		for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
-		{
-			if(ClientId == m_Snap.m_LocalClientId)
-				continue;
-			auto &State = m_aClients[ClientId].m_GoresPrediction;
-			if(aGoresPredictedRemoteFreezeTick[ClientId] >= 0 && m_aGoresInteractionGroup[ClientId] &&
-				aGoresPredictedRemoteFreezeSafeHorizon[ClientId] <= m_GoresAcceptedHorizon + 0.0001f)
-			{
-				State.m_ExpectedFreezeTick = aGoresPredictedRemoteFreezeTick[ClientId];
-				State.m_ExpectedFreezeGeneration = m_GoresPredictionGeneration;
-				State.m_ExpectedFrozen = aGoresPredictedRemoteFrozen[ClientId];
-			}
-			else if(State.m_ExpectedFreezeTick > FinalTickRegular)
-			{
-				State.m_ExpectedFreezeTick = -1;
-				State.m_ExpectedFreezeGeneration = 0;
-			}
 		}
 	}
 
@@ -6126,10 +6130,36 @@ float CGameClient::GetGoresDisplayHorizon(int ClientId) const
 	return Offset;
 }
 
-bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra) const
+void CGameClient::GetGoresDisplayBaseTick(int &Tick, float &Intra)
 {
 	Tick = Client()->PredGameTick(g_Config.m_ClDummy);
 	Intra = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+	if(!g_Config.m_TcRemoveAnti)
+		return;
+
+	CCharacter *pChar = m_PredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
+	CCharacter *pExtraChar = m_ExtraPredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
+	int AdjustTicks = 0;
+	int FreezeTime = 0;
+	if(pExtraChar && pChar)
+	{
+		AdjustTicks = pChar->m_FreezeAccumulation;
+		if(pExtraChar->m_AliveAccumulation > 0)
+			AdjustTicks -= pExtraChar->m_AliveAccumulation;
+		AdjustTicks = std::max(AdjustTicks, 0);
+		FreezeTime = pChar->m_FreezeTime;
+		AdjustTicks = std::min(FreezeTime, AdjustTicks);
+	}
+	if(pChar && AdjustTicks > 0 && FreezeTime > 0)
+	{
+		const float MixAmount = mix(0.0f, 1.0f, 1.0f - AdjustTicks / (float)g_Config.m_TcUnfreezeLagDelayTicks);
+		Client()->GetSmoothFreezeTick(&Tick, &Intra, MixAmount);
+	}
+}
+
+bool CGameClient::ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra)
+{
+	GetGoresDisplayBaseTick(Tick, Intra);
 	BcInputs::ApplyOffset(GetGoresDisplayHorizon(ClientId), Tick, Intra);
 
 	if(Tick > 0 &&

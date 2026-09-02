@@ -1152,7 +1152,8 @@ private:
 	void UpdateSpectatorCursor();
 	void UpdateRenderedCharacters();
 	float GetGoresDisplayHorizon(int ClientId) const;
-	bool ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra) const;
+	void GetGoresDisplayBaseTick(int &Tick, float &Intra);
+	bool ResolveGoresDisplaySample(int ClientId, CNetObj_Character &Prev, CNetObj_Character &Cur, vec2 &Pos, int &Tick, float &Intra);
 	void HandlePredictedEvents(int Tick);
 
 	// BestClient: optimizer
