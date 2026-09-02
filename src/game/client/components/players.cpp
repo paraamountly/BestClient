@@ -1786,55 +1786,32 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		bool m_Hookable;
 	};
 	std::vector<SRescueCandidate> vCandidates;
-	bool aEligible[MAX_CLIENTS] = {};
-	bool AnyEligible = false;
-	uint64_t PredictionState = 1469598103934665603ULL;
-	auto AddPredictionState = [&](int Value) {
-		PredictionState ^= static_cast<uint32_t>(Value);
-		PredictionState *= 1099511628211ULL;
-	};
-
+	bool AnyTrajectoryTarget = false;
 	for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 	{
-		if(TargetId == LocalClientId || !IsPlayerInfoAvailable(TargetId) || GameClient()->IsOtherTeam(TargetId))
-			continue;
-		const auto &Target = GameClient()->m_aClients[TargetId];
-		const bool IsOneSuper = Local.m_Super || Target.m_Super;
-		if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(LocalClientId, TargetId) || Local.m_Solo || Target.m_Solo || Local.m_HookHitDisabled))
-			continue;
-		if(PracticeActive && GameClient()->m_FastPractice.IsPracticeParticipant(LocalClientId) != GameClient()->m_FastPractice.IsPracticeParticipant(TargetId))
-			continue;
-		if(Local.m_RenderCur.m_HookedPlayer == TargetId || Local.m_RenderPrev.m_HookedPlayer == TargetId)
-			continue;
-		aEligible[TargetId] = true;
-		AnyEligible = true;
-		const CCharacterCore &Core = Target.m_Predicted;
-		AddPredictionState(TargetId);
-		AddPredictionState(round_to_int(Core.m_Pos.x * 256.0f));
-		AddPredictionState(round_to_int(Core.m_Pos.y * 256.0f));
-		AddPredictionState(round_to_int(Core.m_Vel.x * 256.0f));
-		AddPredictionState(round_to_int(Core.m_Vel.y * 256.0f));
-		AddPredictionState(aFrozen[TargetId]);
+		if(TargetId != LocalClientId && IsPlayerInfoAvailable(TargetId) && GameClient()->m_PredictedWorld.GetCharacterById(TargetId))
+			AnyTrajectoryTarget = true;
 	}
 
-	if(!AnyEligible)
+	if(!AnyTrajectoryTarget)
+	{
+		m_FreezeRescuePredictionBaseTick = -1;
 		return;
+	}
 
 	const int PredictionBaseTick = GameClient()->m_PredictedWorld.GameTick();
 	const bool RefreshPrediction = PredictionBaseTick != m_FreezeRescuePredictionBaseTick ||
-				       MaxPredictionTicks != m_FreezeRescuePredictionMaxTicks ||
-				       g_Config.m_BcFreezeRescueLineIgnoreSafeLandings != m_FreezeRescuePredictionIgnoreSafeLandings ||
-				       PredictionState != m_FreezeRescuePredictionState;
+				       g_Config.m_BcFreezeRescueLineMaxFreezeTime != m_FreezeRescuePredictionMaxFreezeTime ||
+				       g_Config.m_BcFreezeRescueLineIgnoreSafeLandings != m_FreezeRescuePredictionIgnoreSafeLandings;
 	if(RefreshPrediction)
 	{
 		m_FreezeRescuePredictionBaseTick = PredictionBaseTick;
-		m_FreezeRescuePredictionMaxTicks = MaxPredictionTicks;
+		m_FreezeRescuePredictionMaxFreezeTime = g_Config.m_BcFreezeRescueLineMaxFreezeTime;
 		m_FreezeRescuePredictionIgnoreSafeLandings = g_Config.m_BcFreezeRescueLineIgnoreSafeLandings;
-		m_FreezeRescuePredictionState = PredictionState;
 		bool aWasAirborne[MAX_CLIENTS] = {};
 		for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 		{
-			m_aFreezeRescueDangerous[TargetId] = aEligible[TargetId] && aFrozen[TargetId];
+			m_aFreezeRescueDangerous[TargetId] = TargetId != LocalClientId && IsPlayerInfoAvailable(TargetId) && aFrozen[TargetId];
 			m_aFreezeRescueSafeLanding[TargetId] = false;
 			m_aFreezeRescueFreezeTick[TargetId] = 0;
 			m_aFreezeRescueInterceptPos[TargetId] = GameClient()->m_aClients[TargetId].m_RenderPos;
@@ -1846,7 +1823,7 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		RescueWorld.Init(Collision(), GameClient()->m_PredictedWorld.TuningList(), nullptr);
 		RescueWorld.CopyWorldClean(&GameClient()->m_PredictedWorld);
 		for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
-			if(aEligible[TargetId])
+			if(TargetId != LocalClientId)
 				if(CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId))
 					aWasAirborne[TargetId] = !pCharacter->IsGrounded();
 
@@ -1856,7 +1833,7 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 			RescueWorld.Tick();
 			for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 			{
-				if(!aEligible[TargetId] || m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])
+				if(TargetId == LocalClientId || m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])
 					continue;
 				CCharacter *pCharacter = RescueWorld.GetCharacterById(TargetId);
 				if(!pCharacter)
@@ -1880,9 +1857,17 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 
 	for(int TargetId = 0; TargetId < MAX_CLIENTS; ++TargetId)
 	{
-		if(!aEligible[TargetId] || !m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])
+		if(TargetId == LocalClientId || !IsPlayerInfoAvailable(TargetId) || GameClient()->IsOtherTeam(TargetId) ||
+			(!aFrozen[TargetId] && (!m_aFreezeRescueDangerous[TargetId] || m_aFreezeRescueSafeLanding[TargetId])))
 			continue;
 		const auto &Target = GameClient()->m_aClients[TargetId];
+		const bool IsOneSuper = Local.m_Super || Target.m_Super;
+		if(!IsOneSuper && (!GameClient()->m_Teams.SameTeam(LocalClientId, TargetId) || Local.m_Solo || Target.m_Solo || Local.m_HookHitDisabled))
+			continue;
+		if(PracticeActive && GameClient()->m_FastPractice.IsPracticeParticipant(LocalClientId) != GameClient()->m_FastPractice.IsPracticeParticipant(TargetId))
+			continue;
+		if(Local.m_RenderCur.m_HookedPlayer == TargetId || Local.m_RenderPrev.m_HookedPlayer == TargetId)
+			continue;
 
 		const vec2 Delta = Target.m_RenderPos - Local.m_RenderPos;
 		const float Distance = length(Delta);
@@ -1891,7 +1876,7 @@ void CPlayers::RenderFreezeRescueLines(const bool (&aFrozen)[MAX_CLIENTS], int L
 		const bool Hookable = DirectHookHitsTarget(LocalClientId, TargetId);
 		if(g_Config.m_BcFreezeRescueLinePossibleOnly && !Hookable)
 			continue;
-		vCandidates.push_back({TargetId, m_aFreezeRescueFreezeTick[TargetId], m_aFreezeRescueInterceptPos[TargetId], Hookable});
+		vCandidates.push_back({TargetId, aFrozen[TargetId] ? 0 : m_aFreezeRescueFreezeTick[TargetId], aFrozen[TargetId] ? Target.m_RenderPos : m_aFreezeRescueInterceptPos[TargetId], Hookable});
 	}
 
 	if(vCandidates.empty())
