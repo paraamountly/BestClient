@@ -563,7 +563,12 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	const float BrakeVelocity = SaturatedAdd(-Context.m_ControlSpeed, Context.m_ControlSpeed,
 		Velocity, BrakeDirection * Context.m_ControlAccel);
 
-	int Resolved = Multitick ? Context.m_MultitickDirection : 0;
+	int Resolved = 0;
+	if(Multitick && !GameClient()->TryGetGoresSmartStopMultitickDirection(Resolved))
+	{
+		Cache.m_Valid = false;
+		return 0;
+	}
 	if(!Multitick && BrakeDirection != 0 && BrakeVelocity * BrakeDirection <= Epsilon &&
 		std::abs(BrakeVelocity) + Epsilon < std::abs(NeutralVelocity))
 		Resolved = BrakeDirection;

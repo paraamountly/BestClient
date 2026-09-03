@@ -1248,9 +1248,13 @@ bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction)
 			{
 				CDoorTile DoorTile;
 				Collision()->GetDoorTile(Index, &DoorTile);
-				if(IsSpecialDisplacement(Index) || DoorTile.m_Index != 0)
+				if(IsSpecialDisplacement(Index) || DoorTile.m_Index != 0 ||
+					Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, Core.m_Pos, 18.0f, Index) != 0)
 					return false;
 			}
+			const int EndIndex = Collision()->GetMapIndex(Core.m_Pos);
+			if(Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, Core.m_Pos, 18.0f, EndIndex) != 0)
+				return false;
 		}
 
 		const float Velocity = std::abs(Core.m_Vel.x);

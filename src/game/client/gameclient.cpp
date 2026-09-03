@@ -3242,8 +3242,6 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	bool Grounded;
 	if(!pLocal->TryGetSmartStopPhysics(NextTuning, Grounded))
 		return false;
-	if(g_Config.m_BcSnapTapSmartStopMultitick && !pLocal->TryGetSmartStopMultitickDirection(Context.m_MultitickDirection))
-		return false;
 
 	// Any projectile close enough to enter the explosion influence radius during
 	// its next predicted segment makes the analytical horizontal model uncertain.
@@ -3306,6 +3304,12 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	Hash = Fingerprint(Hash, FloatBits(Context.m_Friction));
 	Context.m_PhysicsFingerprint = Hash;
 	return Context.m_ControlSpeed >= 0.0f && Context.m_ControlAccel >= 0.0f && Context.m_Friction >= 0.0f;
+}
+
+bool CGameClient::TryGetGoresSmartStopMultitickDirection(int &Direction)
+{
+	CCharacter *pLocal = m_PredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
+	return pLocal && pLocal->TryGetSmartStopMultitickDirection(Direction);
 }
 
 bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
