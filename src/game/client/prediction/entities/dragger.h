@@ -23,6 +23,7 @@ public:
 	void Read(const CLaserData *pData);
 	float GetStrength() const { return m_Strength; }
 	bool CanAffectCharacterNextTick(CCharacter *pCharacter);
+	bool CanAffectCharacterWithinTicks(CCharacter *pCharacter, int Ticks, float ExtraRadius);
 
 	void Tick() override;
 };

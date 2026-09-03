@@ -49,6 +49,31 @@ bool CDragger::CanAffectCharacterNextTick(CCharacter *pCharacter)
 		       !Collision()->IntersectNoLaser(NextPos, pCharacter->Core()->m_Pos, nullptr, nullptr);
 }
 
+bool CDragger::CanAffectCharacterWithinTicks(CCharacter *pCharacter, int Ticks, float ExtraRadius)
+{
+	if(!pCharacter || pCharacter->Team() == TEAM_SUPER)
+		return false;
+	if(m_Layer == LAYER_SWITCH && m_Number > 0 && !Switchers()[m_Number].m_aStatus[pCharacter->Team()])
+		return false;
+	const int Period = (int)(GameWorld()->GameTickSpeed() * 0.15f);
+	vec2 Pos = m_Pos;
+	vec2 Core = m_Core;
+	bool CanTarget = m_TargetId == pCharacter->GetCid();
+	for(int Tick = 1; Tick <= Ticks; Tick++)
+	{
+		if((GameWorld()->GameTick() + Tick) % Period == 0)
+		{
+			Collision()->MoverSpeed(Pos.x, Pos.y, &Core);
+			Pos += Core;
+			CanTarget = true;
+		}
+		const float Distance = distance(pCharacter->Core()->m_Pos, Pos);
+		if(CanTarget && Distance > CCharacterCore::PhysicalSize() - ExtraRadius && Distance < g_Config.m_SvDraggerRange + ExtraRadius)
+			return true;
+	}
+	return false;
+}
+
 void CDragger::LookForPlayersToDrag()
 {
 	// Create a list of players who are in the range of the dragger

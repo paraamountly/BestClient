@@ -19,6 +19,7 @@ public:
 	bool Match(CPickup *pPickup);
 	bool InDDNetTile() const { return m_IsCoreActive; }
 	bool CanAffectCharacterNextTick(CCharacter *pCharacter);
+	bool CanAffectCharacterWithinTicks(CCharacter *pCharacter, int Ticks, float ExtraRadius);
 
 	int Type() const { return m_Type; }
 	int Flags() const { return m_Flags; }

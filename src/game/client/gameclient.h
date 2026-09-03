@@ -1234,6 +1234,7 @@ public:
 		uint64_t m_PhysicsFingerprint = 0;
 	};
 	bool TryGetGoresSmartStopContext(SGoresSmartStopContext &Context);
+	bool TryGetGoresSmartStopMultitickDirection(int &Direction);
 	bool IsAspectRatioBlockedByFng() const;
 	std::optional<CServerInfo> m_ConnectServerInfo = std::nullopt;
 	void SetConnectInfo(const NETADDR *pAddress) override;
