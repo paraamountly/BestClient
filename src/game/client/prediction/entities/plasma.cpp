@@ -90,6 +90,25 @@ bool CPlasma::CanAffectCharacterNextTick(const CCharacter *pCharacter)
 	return distance(Closest, pCharacter->Core()->m_Pos) <= Radius;
 }
 
+bool CPlasma::CanAffectCharacterWithinTicks(const CCharacter *pCharacter, int Ticks, float ExtraRadius)
+{
+	if(!pCharacter || m_LifeTime == 0)
+		return false;
+	vec2 Pos = m_Pos;
+	vec2 Core = m_Core;
+	const float Radius = (m_Explosive ? 135.0f + CCharacterCore::PhysicalSize() : CCharacterCore::PhysicalSize()) + ExtraRadius;
+	for(int Tick = 0; Tick < minimum(Ticks, m_LifeTime); Tick++)
+	{
+		Pos += Core;
+		Core *= PLASMA_ACCEL;
+		vec2 Closest = Pos;
+		closest_point_on_line(Pos, Pos + Core, pCharacter->Core()->m_Pos, Closest);
+		if(distance(Closest, pCharacter->Core()->m_Pos) <= Radius)
+			return true;
+	}
+	return false;
+}
+
 void CPlasma::Move()
 {
 	m_Pos += m_Core;

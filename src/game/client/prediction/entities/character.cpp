@@ -1227,6 +1227,17 @@ bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction)
 		       Collision()->IsEvilTeleport(Index) || Collision()->IsCheckTeleport(Index) ||
 		       Collision()->IsCheckEvilTeleport(Index) || Collision()->IsTeleCheckpoint(Index);
 	};
+	auto IsFreezeOrDeath = [this](int Index) {
+		const auto IsFreezeOrDeathTile = [](int Tile) {
+			return Tile == TILE_FREEZE || Tile == TILE_DFREEZE || Tile == TILE_LFREEZE || Tile == TILE_DEATH;
+		};
+		if(IsFreezeOrDeathTile(Collision()->GetTileIndex(Index)) || IsFreezeOrDeathTile(Collision()->GetFrontTileIndex(Index)))
+			return true;
+		const int SwitchType = Collision()->GetSwitchType(Index);
+		const int SwitchNumber = Collision()->GetSwitchNumber(Index);
+		return IsFreezeOrDeathTile(SwitchType) &&
+		       (SwitchNumber == 0 || IsSwitchActiveCb(SwitchNumber, this));
+	};
 	float BestVelocity = -1.0f;
 	float BestDisplacement = -1.0f;
 	for(int Mask = 0; Mask < (1 << LookaheadTicks); Mask++)
@@ -1248,13 +1259,21 @@ bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction)
 			{
 				CDoorTile DoorTile;
 				Collision()->GetDoorTile(Index, &DoorTile);
-				if(IsSpecialDisplacement(Index) || DoorTile.m_Index != 0 ||
+				if(IsSpecialDisplacement(Index) || IsFreezeOrDeath(Index) || DoorTile.m_Index != 0 ||
 					Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, Core.m_Pos, 18.0f, Index) != 0)
 					return false;
 			}
 			const int EndIndex = Collision()->GetMapIndex(Core.m_Pos);
-			if(Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, Core.m_Pos, 18.0f, EndIndex) != 0)
+			if(IsFreezeOrDeath(EndIndex) ||
+				Collision()->GetMoveRestrictions(IsSwitchActiveCb, this, Core.m_Pos, 18.0f, EndIndex) != 0)
 				return false;
+			for(const vec2 Offset : {vec2(1, 1), vec2(1, -1), vec2(-1, 1), vec2(-1, -1)})
+			{
+				const vec2 Corner = Core.m_Pos + Offset * (CCharacterCore::PhysicalSize() / 3.0f);
+				if(Collision()->GetCollisionAt(Corner.x, Corner.y) == TILE_DEATH ||
+					Collision()->GetFrontCollisionAt(Corner.x, Corner.y) == TILE_DEATH)
+					return false;
+			}
 		}
 
 		const float Velocity = std::abs(Core.m_Vel.x);

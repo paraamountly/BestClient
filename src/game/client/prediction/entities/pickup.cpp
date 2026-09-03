@@ -172,6 +172,29 @@ bool CPickup::CanAffectCharacterNextTick(CCharacter *pCharacter)
 	return distance(NextPos, pCharacter->Core()->m_Pos) <= GetProximityRadius() + ms_CollisionExtraSize;
 }
 
+bool CPickup::CanAffectCharacterWithinTicks(CCharacter *pCharacter, int Ticks, float ExtraRadius)
+{
+	if(!pCharacter || m_Type == POWERUP_WEAPON)
+		return false;
+	if(m_Layer == LAYER_SWITCH && m_Number > 0 && m_Number < (int)Switchers().size() &&
+		!Switchers()[m_Number].m_aStatus[pCharacter->Team()])
+		return false;
+	vec2 Pos = m_Pos;
+	vec2 Core = m_Core;
+	const int Period = (int)(GameWorld()->GameTickSpeed() * 0.15f);
+	for(int Tick = 1; Tick <= Ticks; Tick++)
+	{
+		if((GameWorld()->GameTick() + Tick) % Period == 0)
+		{
+			Collision()->MoverSpeed(Pos.x, Pos.y, &Core);
+			Pos += Core;
+		}
+		if(distance(Pos, pCharacter->Core()->m_Pos) <= GetProximityRadius() + ms_CollisionExtraSize + ExtraRadius)
+			return true;
+	}
+	return false;
+}
+
 void CPickup::Move()
 {
 	if(GameWorld()->GameTick() % (int)(GameWorld()->GameTickSpeed() * 0.15f) == 0)

@@ -3309,7 +3309,66 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 bool CGameClient::TryGetGoresSmartStopMultitickDirection(int &Direction)
 {
 	CCharacter *pLocal = m_PredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
-	return pLocal && pLocal->TryGetSmartStopMultitickDirection(Direction);
+	if(!pLocal)
+		return false;
+	constexpr int LookaheadTicks = 3;
+	const CCharacterCore Core = pLocal->GetCore();
+	const float Accel = maximum((float)Core.m_Tuning.m_GroundControlAccel, (float)Core.m_Tuning.m_AirControlAccel);
+	const float LocalReach = length(Core.m_Vel) * LookaheadTicks +
+				 (Accel + (float)Core.m_Tuning.m_Gravity) * LookaheadTicks * (LookaheadTicks + 1) / 2.0f;
+
+	for(int ClientId = 0; ClientId < MAX_CLIENTS; ClientId++)
+	{
+		if(ClientId == m_Snap.m_LocalClientId)
+			continue;
+		CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
+		if(!pOther)
+			continue;
+		const CCharacterCore OtherCore = pOther->GetCore();
+		const float OtherAccel = maximum((float)OtherCore.m_Tuning.m_GroundControlAccel, (float)OtherCore.m_Tuning.m_AirControlAccel);
+		const float OtherReach = length(OtherCore.m_Vel) * LookaheadTicks +
+					 (OtherAccel + (float)OtherCore.m_Tuning.m_Gravity) * LookaheadTicks * (LookaheadTicks + 1) / 2.0f;
+		const float ExternalReach = maximum((float)Core.m_Tuning.m_HookLength,
+						    (float)OtherCore.m_Tuning.m_LaserReach) +
+					    CCharacterCore::PhysicalSize() * 2.0f;
+		if(distance(Core.m_Pos, OtherCore.m_Pos) <= LocalReach + OtherReach + ExternalReach)
+			return false;
+	}
+
+	for(CProjectile *pProjectile = (CProjectile *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PROJECTILE);
+		pProjectile; pProjectile = (CProjectile *)pProjectile->TypeNext())
+	{
+		for(int Tick = 0; Tick < LookaheadTicks; Tick++)
+		{
+			const float StartTime = (m_PredictedWorld.GameTick() + Tick - pProjectile->GetStartTick()) /
+						(float)m_PredictedWorld.GameTickSpeed();
+			const float EndTime = (m_PredictedWorld.GameTick() + Tick + 1 - pProjectile->GetStartTick()) /
+					      (float)m_PredictedWorld.GameTickSpeed();
+			const vec2 StartPos = pProjectile->GetPos(StartTime);
+			const vec2 EndPos = pProjectile->GetPos(EndTime);
+			vec2 ClosestPos = StartPos;
+			closest_point_on_line(StartPos, EndPos, Core.m_Pos, ClosestPos);
+			if(distance(ClosestPos, Core.m_Pos) <= 135.0f + CCharacterCore::PhysicalSize() + LocalReach)
+				return false;
+		}
+	}
+	for(CLaser *pLaser = (CLaser *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_LASER);
+		pLaser; pLaser = (CLaser *)pLaser->TypeNext())
+		if(distance(pLaser->GetPos(), Core.m_Pos) <= maximum(pLaser->GetEnergy(), 0.0f) + CCharacterCore::PhysicalSize() + LocalReach)
+			return false;
+	for(CDragger *pDragger = (CDragger *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_DRAGGER);
+		pDragger; pDragger = (CDragger *)pDragger->TypeNext())
+		if(pDragger->CanAffectCharacterWithinTicks(pLocal, LookaheadTicks, LocalReach))
+			return false;
+	for(CPlasma *pPlasma = (CPlasma *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PLASMA);
+		pPlasma; pPlasma = (CPlasma *)pPlasma->TypeNext())
+		if(pPlasma->CanAffectCharacterWithinTicks(pLocal, LookaheadTicks, LocalReach))
+			return false;
+	for(CPickup *pPickup = (CPickup *)m_PredictedWorld.FindFirst(CGameWorld::ENTTYPE_PICKUP);
+		pPickup; pPickup = (CPickup *)pPickup->TypeNext())
+		if(pPickup->CanAffectCharacterWithinTicks(pLocal, LookaheadTicks, LocalReach))
+			return false;
+	return pLocal->TryGetSmartStopMultitickDirection(Direction);
 }
 
 bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
@@ -3699,7 +3758,7 @@ void CGameClient::OnPredict()
 					CCharacter *pOther = m_PredictedWorld.GetCharacterById(ClientId);
 					if(!pOther)
 						continue;
-					const CCharacterCore &OtherCore = pOther->GetCore();
+					const CCharacterCore OtherCore = pOther->GetCore();
 					const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
 					const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
 					const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
@@ -3905,7 +3964,7 @@ void CGameClient::OnPredict()
 				if(!pOther)
 					continue;
 				auto &State = m_aClients[ClientId].m_GoresPrediction;
-				const CCharacterCore &OtherCore = pOther->GetCore();
+				const CCharacterCore OtherCore = pOther->GetCore();
 				const bool HookedByLocal = LocalCore.HookedPlayer() == ClientId;
 				const bool HookingLocal = OtherCore.HookedPlayer() == m_Snap.m_LocalClientId;
 				const bool CollisionRisk = GoresCharactersColliding(*pLocalChar, *pOther);
