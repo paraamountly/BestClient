@@ -128,7 +128,7 @@ public:
 	int GetOverriddenTuneZone() const;
 	int GetPureTuneZone() const;
 	bool TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded);
-	bool TryGetSmartStopMultitickDirection(int &Direction);
+	bool TryGetSmartStopMultitickDirection(int &Direction, int CandidateDirection = 0);
 
 	bool HammerHitDisabled() const { return m_Core.m_HammerHitDisabled; }
 	bool ShotgunHitDisabled() const { return m_Core.m_ShotgunHitDisabled; }

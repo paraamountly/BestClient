@@ -3306,7 +3306,7 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	return Context.m_ControlSpeed >= 0.0f && Context.m_ControlAccel >= 0.0f && Context.m_Friction >= 0.0f;
 }
 
-bool CGameClient::TryGetGoresSmartStopMultitickDirection(int &Direction)
+bool CGameClient::TryGetGoresSmartStopMultitickDirection(int &Direction, int CandidateDirection)
 {
 	CCharacter *pLocal = m_PredictedWorld.GetCharacterById(m_Snap.m_LocalClientId);
 	if(!pLocal)
@@ -3368,7 +3368,7 @@ bool CGameClient::TryGetGoresSmartStopMultitickDirection(int &Direction)
 		pPickup; pPickup = (CPickup *)pPickup->TypeNext())
 		if(pPickup->CanAffectCharacterWithinTicks(pLocal, LookaheadTicks, LocalReach))
 			return false;
-	return pLocal->TryGetSmartStopMultitickDirection(Direction);
+	return pLocal->TryGetSmartStopMultitickDirection(Direction, CandidateDirection);
 }
 
 bool CGameClient::HasExactPreInput(int ClientId, int Tick) const
