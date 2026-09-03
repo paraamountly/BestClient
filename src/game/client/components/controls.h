@@ -58,7 +58,6 @@ public:
 		int64_t m_LastReleaseTime = 0;
 		uint64_t m_LastReleaseSerial = 0;
 		int m_SwitchDirection = 0;
-		int64_t m_SwitchReleaseTime = 0;
 		uint64_t m_SwitchReleaseSerial = 0;
 		uint64_t m_Serial = 0;
 	};

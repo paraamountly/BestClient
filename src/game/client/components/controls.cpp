@@ -548,7 +548,6 @@ void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 		if(IsSmartSwitchActive() && !OtherHeld && OppositeRelease && State.m_LastReleaseSerial != 0 && InWindow)
 		{
 			State.m_SwitchDirection = Direction;
-			State.m_SwitchReleaseTime = State.m_LastReleaseTime;
 			State.m_SwitchReleaseSerial = State.m_LastReleaseSerial;
 		}
 		else
@@ -564,26 +563,28 @@ void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 int CControls::ResolveSmartSwitchDirection(int Dummy, int RequestedDirection, bool UpdateState)
 {
 	SSmartInputEventState &Event = m_aSmartInputEvent[Dummy];
-	if(!IsSmartSwitchActive() || Event.m_SwitchDirection != RequestedDirection ||
-		Event.m_SwitchReleaseSerial == 0 || Event.m_SwitchReleaseSerial != Event.m_LastReleaseSerial)
-		return RequestedDirection;
-
-	const int64_t Window = time_freq() * (int64_t)g_Config.m_BcSnapTapSmartSwitchWindow / 1000;
-	const int64_t Now = time_get();
-	const bool WindowValid = Now >= Event.m_SwitchReleaseTime &&
-				 Now - Event.m_SwitchReleaseTime <= Window;
-	CGameClient::SGoresSmartStopContext Context;
-	const bool ContextValid = WindowValid && GameClient()->TryGetGoresSmartStopContext(Context);
-	constexpr float Epsilon = 1.0f / 256.0f;
-	const bool StillCounterStrafing = ContextValid && Context.m_VelX * RequestedDirection < -Epsilon;
-	if(!StillCounterStrafing)
-	{
-		if(UpdateState)
+	auto CancelAssist = [&] {
+		if(UpdateState && Event.m_SwitchDirection != 0)
 		{
 			Event.m_SwitchDirection = 0;
 			Event.m_Serial++;
 			m_aSmartDecisionCache[Dummy].m_Valid = false;
 		}
+	};
+	if(!IsSmartSwitchActive() || Event.m_SwitchDirection != RequestedDirection ||
+		Event.m_SwitchReleaseSerial == 0 || Event.m_SwitchReleaseSerial != Event.m_LastReleaseSerial)
+	{
+		CancelAssist();
+		return RequestedDirection;
+	}
+
+	CGameClient::SGoresSmartStopContext Context;
+	const bool ContextValid = GameClient()->TryGetGoresSmartStopContext(Context);
+	constexpr float Epsilon = 1.0f / 256.0f;
+	const bool StillCounterStrafing = ContextValid && Context.m_VelX * RequestedDirection < -Epsilon;
+	if(!StillCounterStrafing)
+	{
+		CancelAssist();
 		return RequestedDirection;
 	}
 
@@ -596,7 +597,7 @@ int CControls::ResolveSmartSwitchDirection(int Dummy, int RequestedDirection, bo
 	int Resolved = RequestedDirection;
 	if(!GameClient()->TryGetGoresSmartStopMultitickDirection(Resolved, RequestedDirection))
 	{
-		Cache.m_Valid = false;
+		CancelAssist();
 		return RequestedDirection;
 	}
 	Cache.m_Valid = true;
@@ -698,7 +699,8 @@ int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightP
 
 	if(IsSnapTapActive() || !UseGammaInputMovement())
 	{
-		if(LeftPressed != RightPressed && IsSmartSwitchActive())
+		if(LeftPressed != RightPressed &&
+			(IsSmartSwitchActive() || m_aSmartInputEvent[Dummy].m_SwitchDirection != 0))
 			return ResolveSmartSwitchDirection(Dummy, LeftPressed ? -1 : 1, UpdateState);
 		if(IsSmartStopActive())
 			return ResolveSmartStopDirection(Dummy, LeftPressed, RightPressed);
