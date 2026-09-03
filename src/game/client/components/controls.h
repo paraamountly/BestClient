@@ -54,6 +54,12 @@ public:
 	{
 		bool m_LeftHeld = false;
 		bool m_RightHeld = false;
+		int m_LastReleasedDirection = 0;
+		int64_t m_LastReleaseTime = 0;
+		uint64_t m_LastReleaseSerial = 0;
+		int m_SwitchDirection = 0;
+		int64_t m_SwitchReleaseTime = 0;
+		uint64_t m_SwitchReleaseSerial = 0;
 		uint64_t m_Serial = 0;
 	};
 	struct SSmartDecisionCache
@@ -63,6 +69,7 @@ public:
 		int m_DecisionTick = 0;
 		int m_Direction = 0;
 		bool m_Multitick = false;
+		bool m_SmartSwitch = false;
 		uint64_t m_PhysicsFingerprint = 0;
 	};
 	SSmartInputEventState m_aSmartInputEvent[NUM_DUMMIES];
@@ -97,7 +104,9 @@ private:
 	int ResolveSnapTapDirection(int Dummy, bool LeftPressed, bool RightPressed);
 	void UpdateSmartInputEvent(int Dummy, int Direction, bool Held);
 	bool IsSmartStopActive() const;
+	bool IsSmartSwitchActive() const;
 	int ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed);
+	int ResolveSmartSwitchDirection(int Dummy, int RequestedDirection, bool UpdateState);
 	static void ConKeyInputState(IConsole::IResult *pResult, void *pUserData);
 	static void ConKeyInputCounter(IConsole::IResult *pResult, void *pUserData);
 	static void ConKeyInputSet(IConsole::IResult *pResult, void *pUserData);

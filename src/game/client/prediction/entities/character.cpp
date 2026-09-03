@@ -1213,11 +1213,12 @@ bool CCharacter::TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded)
 	return true;
 }
 
-bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction)
+bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction, int CandidateDirection)
 {
 	constexpr int LookaheadTicks = 3;
 	constexpr float Epsilon = 1.0f / 256.0f;
-	const int BrakeDirection = m_Core.m_Vel.x > Epsilon ? -1 : (m_Core.m_Vel.x < -Epsilon ? 1 : 0);
+	const int BrakeDirection = CandidateDirection != 0 ? CandidateDirection :
+							     (m_Core.m_Vel.x > Epsilon ? -1 : (m_Core.m_Vel.x < -Epsilon ? 1 : 0));
 	Direction = 0;
 	if(BrakeDirection == 0)
 		return true;

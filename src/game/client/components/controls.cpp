@@ -516,6 +516,13 @@ bool CControls::IsSmartStopActive() const
 	       g_Config.m_BcInputs == BC_INPUTS_GORES && GameClient()->IsGoresInputMode();
 }
 
+bool CControls::IsSmartSwitchActive() const
+{
+	return g_Config.m_BcSnapTapSmartSwitch != 0 &&
+	       !GameClient()->IsSnapTapBlockedByCommunity() &&
+	       g_Config.m_BcInputs == BC_INPUTS_GORES && GameClient()->IsGoresInputMode();
+}
+
 void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 {
 	SSmartInputEventState &State = m_aSmartInputEvent[Dummy];
@@ -523,9 +530,83 @@ void CControls::UpdateSmartInputEvent(int Dummy, int Direction, bool Held)
 	if(Current == Held)
 		return;
 
+	const int64_t Now = time_get();
+	const bool OtherHeld = Direction < 0 ? State.m_RightHeld : State.m_LeftHeld;
+	if(!Held)
+	{
+		State.m_LastReleasedDirection = Direction;
+		State.m_LastReleaseTime = Now;
+		State.m_LastReleaseSerial = State.m_Serial + 1;
+		if(State.m_SwitchDirection != 0)
+			State.m_SwitchDirection = 0;
+	}
+	else
+	{
+		const int64_t Window = time_freq() * (int64_t)g_Config.m_BcSnapTapSmartSwitchWindow / 1000;
+		const bool OppositeRelease = State.m_LastReleasedDirection == -Direction;
+		const bool InWindow = Now >= State.m_LastReleaseTime && Now - State.m_LastReleaseTime <= Window;
+		if(IsSmartSwitchActive() && !OtherHeld && OppositeRelease && State.m_LastReleaseSerial != 0 && InWindow)
+		{
+			State.m_SwitchDirection = Direction;
+			State.m_SwitchReleaseTime = State.m_LastReleaseTime;
+			State.m_SwitchReleaseSerial = State.m_LastReleaseSerial;
+		}
+		else
+		{
+			State.m_SwitchDirection = 0;
+		}
+	}
 	Current = Held;
 	State.m_Serial++;
 	m_aSmartDecisionCache[Dummy].m_Valid = false;
+}
+
+int CControls::ResolveSmartSwitchDirection(int Dummy, int RequestedDirection, bool UpdateState)
+{
+	SSmartInputEventState &Event = m_aSmartInputEvent[Dummy];
+	if(!IsSmartSwitchActive() || Event.m_SwitchDirection != RequestedDirection ||
+		Event.m_SwitchReleaseSerial == 0 || Event.m_SwitchReleaseSerial != Event.m_LastReleaseSerial)
+		return RequestedDirection;
+
+	const int64_t Window = time_freq() * (int64_t)g_Config.m_BcSnapTapSmartSwitchWindow / 1000;
+	const int64_t Now = time_get();
+	const bool WindowValid = Now >= Event.m_SwitchReleaseTime &&
+				 Now - Event.m_SwitchReleaseTime <= Window;
+	CGameClient::SGoresSmartStopContext Context;
+	const bool ContextValid = WindowValid && GameClient()->TryGetGoresSmartStopContext(Context);
+	constexpr float Epsilon = 1.0f / 256.0f;
+	const bool StillCounterStrafing = ContextValid && Context.m_VelX * RequestedDirection < -Epsilon;
+	if(!StillCounterStrafing)
+	{
+		if(UpdateState)
+		{
+			Event.m_SwitchDirection = 0;
+			Event.m_Serial++;
+			m_aSmartDecisionCache[Dummy].m_Valid = false;
+		}
+		return RequestedDirection;
+	}
+
+	SSmartDecisionCache &Cache = m_aSmartDecisionCache[Dummy];
+	if(Cache.m_Valid && Cache.m_SmartSwitch && Cache.m_InputSerial == Event.m_Serial &&
+		Cache.m_DecisionTick == Context.m_DecisionTick &&
+		Cache.m_PhysicsFingerprint == Context.m_PhysicsFingerprint)
+		return Cache.m_Direction;
+
+	int Resolved = RequestedDirection;
+	if(!GameClient()->TryGetGoresSmartStopMultitickDirection(Resolved, RequestedDirection))
+	{
+		Cache.m_Valid = false;
+		return RequestedDirection;
+	}
+	Cache.m_Valid = true;
+	Cache.m_InputSerial = Event.m_Serial;
+	Cache.m_DecisionTick = Context.m_DecisionTick;
+	Cache.m_Direction = Resolved;
+	Cache.m_Multitick = true;
+	Cache.m_SmartSwitch = true;
+	Cache.m_PhysicsFingerprint = Context.m_PhysicsFingerprint;
+	return Resolved;
 }
 
 int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool RightPressed)
@@ -578,6 +659,7 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	Cache.m_DecisionTick = Context.m_DecisionTick;
 	Cache.m_Direction = Resolved;
 	Cache.m_Multitick = Multitick;
+	Cache.m_SmartSwitch = false;
 	Cache.m_PhysicsFingerprint = Context.m_PhysicsFingerprint;
 	return Resolved;
 }
@@ -616,6 +698,8 @@ int CControls::ResolveMovementDirection(int Dummy, bool LeftPressed, bool RightP
 
 	if(IsSnapTapActive() || !UseGammaInputMovement())
 	{
+		if(LeftPressed != RightPressed && IsSmartSwitchActive())
+			return ResolveSmartSwitchDirection(Dummy, LeftPressed ? -1 : 1, UpdateState);
 		if(IsSmartStopActive())
 			return ResolveSmartStopDirection(Dummy, LeftPressed, RightPressed);
 		return ResolveSnapTapDirection(Dummy, LeftPressed, RightPressed);
