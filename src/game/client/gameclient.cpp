@@ -3242,6 +3242,8 @@ bool CGameClient::TryGetGoresSmartStopContext(SGoresSmartStopContext &Context)
 	bool Grounded;
 	if(!pLocal->TryGetSmartStopPhysics(NextTuning, Grounded))
 		return false;
+	if(g_Config.m_BcSnapTapSmartStopMultitick && !pLocal->TryGetSmartStopMultitickDirection(Context.m_MultitickDirection))
+		return false;
 
 	// Any projectile close enough to enter the explosion influence radius during
 	// its next predicted segment makes the analytical horizontal model uncertain.

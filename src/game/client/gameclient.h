@@ -1231,6 +1231,7 @@ public:
 		float m_ControlAccel = 0.0f;
 		float m_Friction = 0.0f;
 		bool m_Grounded = false;
+		int m_MultitickDirection = 0;
 		uint64_t m_PhysicsFingerprint = 0;
 	};
 	bool TryGetGoresSmartStopContext(SGoresSmartStopContext &Context);

@@ -62,6 +62,7 @@ public:
 		uint64_t m_InputSerial = 0;
 		int m_DecisionTick = 0;
 		int m_Direction = 0;
+		bool m_Multitick = false;
 		uint64_t m_PhysicsFingerprint = 0;
 	};
 	SSmartInputEventState m_aSmartInputEvent[NUM_DUMMIES];

@@ -1213,6 +1213,63 @@ bool CCharacter::TryGetSmartStopPhysics(CTuningParams &Tuning, bool &Grounded)
 	return true;
 }
 
+bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction)
+{
+	constexpr int LookaheadTicks = 3;
+	constexpr float Epsilon = 1.0f / 256.0f;
+	const int BrakeDirection = m_Core.m_Vel.x > Epsilon ? -1 : (m_Core.m_Vel.x < -Epsilon ? 1 : 0);
+	Direction = 0;
+	if(BrakeDirection == 0)
+		return true;
+
+	auto IsSpecialDisplacement = [this](int Index) {
+		return Collision()->IsSpeedup(Index) || Collision()->IsTeleport(Index) ||
+		       Collision()->IsEvilTeleport(Index) || Collision()->IsCheckTeleport(Index) ||
+		       Collision()->IsCheckEvilTeleport(Index) || Collision()->IsTeleCheckpoint(Index);
+	};
+	float BestVelocity = -1.0f;
+	float BestDisplacement = -1.0f;
+	for(int Mask = 0; Mask < (1 << LookaheadTicks); Mask++)
+	{
+		CCharacterCore Core = m_Core;
+		Core.SetCoreWorld(nullptr, Collision(), nullptr);
+		const float StartX = Core.m_Pos.x;
+		for(int Tick = 0; Tick < LookaheadTicks; Tick++)
+		{
+			const int StartIndex = Collision()->GetMapIndex(Core.m_Pos);
+			const int TuneZone = GameWorld()->m_WorldConfig.m_UseTuneZones ? Collision()->IsTune(StartIndex) : 0;
+			Core.m_Tuning = *GetTuning(m_TuneZoneOverride == TuneZone::OVERRIDE_NONE ? TuneZone : m_TuneZoneOverride);
+			Core.m_Direction = (Mask & (1 << Tick)) ? BrakeDirection : 0;
+			const vec2 StartPos = Core.m_Pos;
+			Core.Tick(false, false);
+			Core.Move();
+			Core.Quantize();
+			for(const int Index : Collision()->GetMapIndices(StartPos, Core.m_Pos))
+			{
+				CDoorTile DoorTile;
+				Collision()->GetDoorTile(Index, &DoorTile);
+				if(IsSpecialDisplacement(Index) || DoorTile.m_Index != 0)
+					return false;
+			}
+		}
+
+		const float Velocity = std::abs(Core.m_Vel.x);
+		const float Displacement = std::abs(Core.m_Pos.x - StartX);
+		const bool BetterVelocity = BestVelocity < 0.0f || Velocity + Epsilon < BestVelocity;
+		const bool EqualVelocity = BestVelocity >= 0.0f && std::abs(Velocity - BestVelocity) <= Epsilon;
+		const bool BetterDisplacement = EqualVelocity && Displacement + Epsilon < BestDisplacement;
+		const bool EqualScore = EqualVelocity && std::abs(Displacement - BestDisplacement) <= Epsilon;
+		const bool PreferNeutral = EqualScore && (Mask & 1) == 0 && Direction != 0;
+		if(BetterVelocity || BetterDisplacement || PreferNeutral)
+		{
+			BestVelocity = Velocity;
+			BestDisplacement = Displacement;
+			Direction = (Mask & 1) ? BrakeDirection : 0;
+		}
+	}
+	return true;
+}
+
 void CCharacter::DDRaceTick()
 {
 	mem_copy(&m_Input, &m_SavedInput, sizeof(m_Input));

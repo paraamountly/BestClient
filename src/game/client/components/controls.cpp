@@ -540,6 +540,7 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	const bool ContextValid = GameClient()->TryGetGoresSmartStopContext(Context);
 
 	SSmartDecisionCache &Cache = m_aSmartDecisionCache[Dummy];
+	const bool Multitick = g_Config.m_BcSnapTapSmartStopMultitick != 0;
 	if(!ContextValid)
 	{
 		Cache.m_Valid = false;
@@ -547,6 +548,7 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	}
 	if(Cache.m_Valid && Cache.m_InputSerial == Event.m_Serial &&
 		Cache.m_DecisionTick == Context.m_DecisionTick &&
+		Cache.m_Multitick == Multitick &&
 		Cache.m_PhysicsFingerprint == Context.m_PhysicsFingerprint)
 		return Cache.m_Direction;
 
@@ -561,8 +563,8 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	const float BrakeVelocity = SaturatedAdd(-Context.m_ControlSpeed, Context.m_ControlSpeed,
 		Velocity, BrakeDirection * Context.m_ControlAccel);
 
-	int Resolved = 0;
-	if(BrakeDirection != 0 && BrakeVelocity * BrakeDirection <= Epsilon &&
+	int Resolved = Multitick ? Context.m_MultitickDirection : 0;
+	if(!Multitick && BrakeDirection != 0 && BrakeVelocity * BrakeDirection <= Epsilon &&
 		std::abs(BrakeVelocity) + Epsilon < std::abs(NeutralVelocity))
 		Resolved = BrakeDirection;
 
@@ -570,6 +572,7 @@ int CControls::ResolveSmartStopDirection(int Dummy, bool LeftPressed, bool Right
 	Cache.m_InputSerial = Event.m_Serial;
 	Cache.m_DecisionTick = Context.m_DecisionTick;
 	Cache.m_Direction = Resolved;
+	Cache.m_Multitick = Multitick;
 	Cache.m_PhysicsFingerprint = Context.m_PhysicsFingerprint;
 	return Resolved;
 }
