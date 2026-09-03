@@ -1241,11 +1241,17 @@ bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction, int Candidate
 	};
 	float BestVelocity = -1.0f;
 	float BestDisplacement = -1.0f;
+	float BestOpposingSpeedSum = -1.0f;
+	float BestFinalOpposingSpeed = -1.0f;
+	int BestFirstNonOpposingTick = LookaheadTicks + 1;
 	for(int Mask = 0; Mask < (1 << LookaheadTicks); Mask++)
 	{
 		CCharacterCore Core = m_Core;
 		Core.SetCoreWorld(nullptr, Collision(), nullptr);
 		const float StartX = Core.m_Pos.x;
+		float OpposingSpeedSum = 0.0f;
+		float FinalOpposingSpeed = 0.0f;
+		int FirstNonOpposingTick = LookaheadTicks + 1;
 		for(int Tick = 0; Tick < LookaheadTicks; Tick++)
 		{
 			const int StartIndex = Collision()->GetMapIndex(Core.m_Pos);
@@ -1256,6 +1262,13 @@ bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction, int Candidate
 			Core.Tick(false, false);
 			Core.Move();
 			Core.Quantize();
+			if(CandidateDirection != 0)
+			{
+				FinalOpposingSpeed = maximum(0.0f, -Core.m_Vel.x * CandidateDirection);
+				OpposingSpeedSum += FinalOpposingSpeed;
+				if(FirstNonOpposingTick > LookaheadTicks && FinalOpposingSpeed <= Epsilon)
+					FirstNonOpposingTick = Tick + 1;
+			}
 			for(const int Index : Collision()->GetMapIndices(StartPos, Core.m_Pos))
 			{
 				CDoorTile DoorTile;
@@ -1277,18 +1290,38 @@ bool CCharacter::TryGetSmartStopMultitickDirection(int &Direction, int Candidate
 			}
 		}
 
-		const float Velocity = std::abs(Core.m_Vel.x);
-		const float Displacement = std::abs(Core.m_Pos.x - StartX);
-		const bool BetterVelocity = BestVelocity < 0.0f || Velocity + Epsilon < BestVelocity;
-		const bool EqualVelocity = BestVelocity >= 0.0f && std::abs(Velocity - BestVelocity) <= Epsilon;
-		const bool BetterDisplacement = EqualVelocity && Displacement + Epsilon < BestDisplacement;
-		const bool EqualScore = EqualVelocity && std::abs(Displacement - BestDisplacement) <= Epsilon;
-		const bool PreferNeutral = EqualScore && (Mask & 1) == 0 && Direction != 0;
-		if(BetterVelocity || BetterDisplacement || PreferNeutral)
+		if(CandidateDirection != 0)
 		{
-			BestVelocity = Velocity;
-			BestDisplacement = Displacement;
-			Direction = (Mask & 1) ? BrakeDirection : 0;
+			const bool BetterOpposingSpeedSum = BestOpposingSpeedSum < 0.0f || OpposingSpeedSum + Epsilon < BestOpposingSpeedSum;
+			const bool EqualOpposingSpeedSum = BestOpposingSpeedSum >= 0.0f && std::abs(OpposingSpeedSum - BestOpposingSpeedSum) <= Epsilon;
+			const bool BetterFinalOpposingSpeed = EqualOpposingSpeedSum && FinalOpposingSpeed + Epsilon < BestFinalOpposingSpeed;
+			const bool EqualFinalOpposingSpeed = EqualOpposingSpeedSum && std::abs(FinalOpposingSpeed - BestFinalOpposingSpeed) <= Epsilon;
+			const bool EarlierNonOpposingTick = EqualFinalOpposingSpeed && FirstNonOpposingTick < BestFirstNonOpposingTick;
+			const bool EqualScore = EqualFinalOpposingSpeed && FirstNonOpposingTick == BestFirstNonOpposingTick;
+			const bool PreferRequestedDirection = EqualScore && (Mask & 1) != 0 && Direction == 0;
+			if(BetterOpposingSpeedSum || BetterFinalOpposingSpeed || EarlierNonOpposingTick || PreferRequestedDirection)
+			{
+				BestOpposingSpeedSum = OpposingSpeedSum;
+				BestFinalOpposingSpeed = FinalOpposingSpeed;
+				BestFirstNonOpposingTick = FirstNonOpposingTick;
+				Direction = (Mask & 1) ? CandidateDirection : 0;
+			}
+		}
+		else
+		{
+			const float Velocity = std::abs(Core.m_Vel.x);
+			const float Displacement = std::abs(Core.m_Pos.x - StartX);
+			const bool BetterVelocity = BestVelocity < 0.0f || Velocity + Epsilon < BestVelocity;
+			const bool EqualVelocity = BestVelocity >= 0.0f && std::abs(Velocity - BestVelocity) <= Epsilon;
+			const bool BetterDisplacement = EqualVelocity && Displacement + Epsilon < BestDisplacement;
+			const bool EqualScore = EqualVelocity && std::abs(Displacement - BestDisplacement) <= Epsilon;
+			const bool PreferNeutral = EqualScore && (Mask & 1) == 0 && Direction != 0;
+			if(BetterVelocity || BetterDisplacement || PreferNeutral)
+			{
+				BestVelocity = Velocity;
+				BestDisplacement = Displacement;
+				Direction = (Mask & 1) ? BrakeDirection : 0;
+			}
 		}
 	}
 	return true;
